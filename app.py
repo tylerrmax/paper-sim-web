@@ -164,6 +164,74 @@ def queue_command(kind, payload):
     return False
 
 
+# ---------- 净值走势（起点=100，日期对齐） ----------
+def nav_chart_svg(equity):
+    series = []
+    for aid, label, color in (("sim_hk", "港股", "#1a1a1a"),
+                             ("sim_crypto", "加密", "#e5484d")):
+        pts = equity.get(aid) or []
+        if len(pts) < 2 or not pts[0][1]:
+            continue
+        base = pts[0][1]
+        series.append((label, color, [(d, v / base * 100) for d, v in pts]))
+    if not series:
+        return
+    dates = sorted({d for _, _, pts in series for d, _ in pts})
+    W, H, PT, PB = 600, 170, 14, 22
+    aligned = []
+    for label, color, pts in series:
+        m = dict(pts)
+        vals, last = [], None
+        for d in dates:
+            if d in m:
+                last = m[d]
+            vals.append(last)
+        start = next(i for i, v in enumerate(vals) if v is not None)
+        aligned.append((label, color, vals[start:], start))
+    allv = [v for _, _, vals, _ in aligned for v in vals]
+    lo, hi = min(allv), max(allv)
+    pad = max((hi - lo) * 0.15, 0.5)
+    lo, hi = lo - pad, hi + pad
+
+    def X(i):
+        return (i / (len(dates) - 1) * W) if len(dates) > 1 else W / 2
+
+    def Y(v):
+        return PT + (1 - (v - lo) / (hi - lo)) * (H - PT - PB)
+
+    parts = []
+    if lo < 100 < hi:
+        y0 = Y(100)
+        parts.append(f'<line x1="0" y1="{y0:.1f}" x2="{W}" y2="{y0:.1f}" '
+                     'stroke="#ddd" stroke-dasharray="4 3"/>')
+    for label, color, vals, start in aligned:
+        pts_str = " ".join(f"{X(start + i):.1f},{Y(v):.1f}"
+                           for i, v in enumerate(vals))
+        parts.append(f'<polyline points="{pts_str}" fill="none" '
+                     f'stroke="{color}" stroke-width="2"/>')
+        ex, ey = X(start + len(vals) - 1), Y(vals[-1])
+        parts.append(f'<circle cx="{ex:.1f}" cy="{ey:.1f}" r="3" fill="{color}"/>')
+        parts.append(f'<text x="{ex - 5:.1f}" y="{ey - 8:.1f}" font-size="11" '
+                     f'fill="{color}" text-anchor="end">{vals[-1]:.1f}</text>')
+    parts.append(f'<text x="2" y="{Y(hi) + 11:.1f}" font-size="10" '
+                 f'fill="#aaa">{hi:.1f}</text>')
+    parts.append(f'<text x="2" y="{Y(lo) - 3:.1f}" font-size="10" '
+                 f'fill="#aaa">{lo:.1f}</text>')
+    parts.append(f'<text x="2" y="{H - 6:.1f}" font-size="10" '
+                 f'fill="#aaa">{dates[0]}</text>')
+    parts.append(f'<text x="{W - 2:.1f}" y="{H - 6:.1f}" font-size="10" '
+                 f'fill="#aaa" text-anchor="end">{dates[-1]}</text>')
+    svg = (f'<svg viewBox="0 0 {W} {H}" style="width:100%;height:auto">'
+           f'{"".join(parts)}</svg>')
+    legend = " &nbsp; ".join(
+        f'<span class="dot" style="background:{c}"></span>{l}'
+        for l, c, _ in series)
+    st.markdown('<div class="chart-label">净值走势（起点=100）</div>',
+                unsafe_allow_html=True)
+    st.markdown(svg, unsafe_allow_html=True)
+    st.markdown(f'<div class="chart-legend">{legend}</div>', unsafe_allow_html=True)
+
+
 # ---------- 页眉 ----------
 st.markdown("### 模拟盘")
 st.caption(f"数据截至 {asof} · 规则 {snap.get('rule_version', '—')}")
@@ -184,7 +252,10 @@ if c2.button("切手动" if mod == "auto" else "切自动", width="stretch"):
         st.rerun()
 st.caption("操作约2分钟内生效")
 
-tab_stock, tab_crypto = st.tabs(["股票", "加密货币"])
+# ---------- 净值走势（组合锚点） ----------
+nav_chart_svg(snap.get("equity", {}) or {})
+
+col_stock, col_crypto = st.columns(2)
 
 
 # ---------- 通用组件 ----------
@@ -249,12 +320,6 @@ def account_card(aid, label, not_started_text=None):
                 f'<div class="kv"><span class="k num">{p["symbol"]} × {p["qty"]:g}</span>'
                 f'<span class="v num">{f2(p.get("market_value"))}</span></div>',
                 unsafe_allow_html=True)
-    # 净值曲线
-    eq = snap.get("equity", {}).get(aid, [])
-    if len(eq) > 1:
-        st.markdown('<div class="sec" style="font-size:14px">净值曲线</div>',
-                    unsafe_allow_html=True)
-        st.line_chart({d: n for d, n in eq})
     # 信号与成交（折叠，保持精简）
     sigs = [s for s in snap.get("signals", []) if s.get("account") == aid][:20]
     fills = [f for f in snap.get("fills", []) if f.get("account") == aid][:20]
@@ -276,8 +341,8 @@ def account_card(aid, label, not_started_text=None):
             st.caption("暂无成交")
 
 
-# ---------- 股票 tab ----------
-with tab_stock:
+# ---------- 股票 ----------
+with col_stock:
     pool = snap.get("stock_pool", {}) or {}
     total = pool.get("total_cny")
     st.markdown('<div class="hero-label">总资产 · CNY</div>', unsafe_allow_html=True)
@@ -297,8 +362,8 @@ with tab_stock:
                  if a_not_started else None)
     account_card("sim_hk", "港股")
 
-# ---------- 加密货币 tab ----------
-with tab_crypto:
+# ---------- 加密货币 ----------
+with col_crypto:
     a = accts.get("sim_crypto", {})
     st.markdown('<div class="hero-label">总资产 · USDT</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="hero-num num">{f2(a.get("nav"))}</div>', unsafe_allow_html=True)
@@ -310,38 +375,41 @@ with tab_crypto:
     pending_strip(pend_crypto, "加密队列")
     account_card("sim_crypto", "加密账户")
 
+# ---------- 轮动门 / 毕业进度 ----------
+col_rg, col_grad = st.columns(2)
+with col_rg:
     rg = snap.get("rotation_gate", {}) or {}
-    with st.expander(f'轮动门槛（{rg.get("met", 0)}/{rg.get("total", 3)} 项满足）'):
-        for it in rg.get("items", []):
-            st.markdown(
-                f'<div class="kv"><span class="k">{it["label"]} '
-                f'<span class="num">{it["value"] if it["value"] is not None else "—"}{it.get("unit", "")}</span></span>'
-                f'<span class="v">{it.get("status", "")}</span></div>',
-                unsafe_allow_html=True)
-        st.caption(rg.get("note", ""))
+    st.markdown(f'<div class="sec">轮动门槛（{rg.get("met", 0)}/{rg.get("total", 3)} 项满足）</div>', unsafe_allow_html=True)
+    for it in rg.get("items", []):
+        st.markdown(
+            f'<div class="kv"><span class="k">{it["label"]} '
+            f'<span class="num">{it["value"] if it["value"] is not None else "—"}{it.get("unit", "")}</span></span>'
+            f'<span class="v">{it.get("status", "")}</span></div>',
+            unsafe_allow_html=True)
+    st.caption(rg.get("note", ""))
 
-# ---------- 毕业进度 ----------
-st.markdown('<div class="sec">毕业进度</div>', unsafe_allow_html=True)
-g = snap.get("graduation", {}) or {}
-tg = g.get("targets", {})
-for aid, label in (("sim_a", "A股"), ("sim_hk", "港股"), ("sim_crypto", "加密")):
-    ga = (g.get("accounts", {}) or {}).get(aid, {})
-    n = ga.get("round_trips") or 0
-    wlr = ga.get("win_loss_ratio")
-    mdd = ga.get("max_drawdown")
-    wlr_ok = wlr is not None and wlr >= (tg.get("win_loss_ratio") or 3.0)
-    mdd_ok = mdd is not None and mdd <= (tg.get("max_drawdown") or 0.10)
-    st.markdown(
-        f'<div class="kv"><span class="k">{label}'
-        f'<span class="num">（{n}/{tg.get("sample_min", 20)}–{tg.get("sample_max", 30)}笔）</span></span>'
-        f'<span class="v num">盈亏比 '
-        f'<span class="{"up" if wlr_ok else "flat"}">{f2(wlr)}</span>'
-        f'（硬线≥{tg.get("win_loss_ratio", 3.0):g}） · 回撤 '
-        f'<span class="{"up" if mdd_ok else "flat"}">'
-        f'{f"{mdd * 100:.1f}%" if mdd is not None else "—"}</span>'
-        f'（≤{(tg.get("max_drawdown") or 0.10) * 100:.0f}%）</span></div>',
-        unsafe_allow_html=True)
-st.caption(g.get("execution_note", ""))
+with col_grad:
+    st.markdown('<div class="sec">毕业进度</div>', unsafe_allow_html=True)
+    g = snap.get("graduation", {}) or {}
+    tg = g.get("targets", {})
+    for aid, label in (("sim_a", "A股"), ("sim_hk", "港股"), ("sim_crypto", "加密")):
+        ga = (g.get("accounts", {}) or {}).get(aid, {})
+        n = ga.get("round_trips") or 0
+        wlr = ga.get("win_loss_ratio")
+        mdd = ga.get("max_drawdown")
+        wlr_ok = wlr is not None and wlr >= (tg.get("win_loss_ratio") or 3.0)
+        mdd_ok = mdd is not None and mdd <= (tg.get("max_drawdown") or 0.10)
+        st.markdown(
+            f'<div class="kv"><span class="k">{label}'
+            f'<span class="num">（{n}/{tg.get("sample_min", 20)}–{tg.get("sample_max", 30)}笔）</span></span>'
+            f'<span class="v num">盈亏比 '
+            f'<span class="{"up" if wlr_ok else "flat"}">{f2(wlr)}</span>'
+            f'（硬线≥{tg.get("win_loss_ratio", 3.0):g}） · 回撤 '
+            f'<span class="{"up" if mdd_ok else "flat"}">'
+            f'{f"{mdd * 100:.1f}%" if mdd is not None else "—"}</span>'
+            f'（≤{(tg.get("max_drawdown") or 0.10) * 100:.0f}%）</span></div>',
+            unsafe_allow_html=True)
+    st.caption(g.get("execution_note", ""))
 
 st.markdown(
     f'<div class="foot">规则版本 {snap.get("rule_version", "—")} · '
