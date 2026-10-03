@@ -143,18 +143,19 @@ def _day_word(dt, now):
 
 
 def tape_html():
-    """顶部滚动行情条：只保留标的价格（持仓现价按日K收盘 + BTC 实时）。"""
+    """顶部滚动行情条：只保留标的价格（全跟踪标的最新收盘 + BTC 实时）。"""
     items = []
     live = btc_live()
     if live:
         items.append(f'BTC/USDT <span class="num">{live:,.1f}</span> '
                      f'<span class="livedot" style="margin:0 0 1px 4px"></span>')
-    for p in snap.get("positions", []):
-        if p.get("symbol") == "BTCUSDT":
+    for t in snap.get("tape", []) or []:
+        if t.get("symbol") == "BTCUSDT":
             continue  # 已有实时，跳过收盘价避免重复
-        px = (p.get("market_value") or 0) / p["qty"] if p.get("qty") else None
+        px = t.get("price")
         if px:
-            items.append(f'{p["symbol"]} <span class="num">{px:,.3f}</span>')
+            fmt = ",.3f" if px < 1000 else ",.1f"
+            items.append(f'{t["symbol"]} <span class="num">{px:{fmt}}</span>')
     if not items:
         return
     half = "".join(f'<span class="tape-item">{it}</span>' for it in items)

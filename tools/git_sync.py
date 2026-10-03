@@ -15,6 +15,7 @@ import base64
 import glob
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime
@@ -111,6 +112,19 @@ def main():
         if data is not None:
             # 公开仓库隐私：去掉实盘镜像（真实持仓），只留模拟盘数据
             data.pop("real_mirror", None)
+            # 滚动条：注入全跟踪标的最新收盘价（只读 DB，不改冻结系统）
+            try:
+                db = sqlite3.connect(os.path.join(SIM, "db", "sim.db"))
+                rows = db.execute(
+                    "SELECT symbol, close FROM market_data "
+                    "WHERE (symbol, date) IN "
+                    "(SELECT symbol, MAX(date) FROM market_data GROUP BY symbol)"
+                ).fetchall()
+                db.close()
+                data["tape"] = [{"symbol": s, "price": c}
+                                for s, c in sorted(rows)]
+            except Exception as e:
+                print(f"[{now}] tape 行情注入失败: {e}")
             new = json.dumps(data, ensure_ascii=False,
                              separators=(",", ":")).encode("utf-8")
             old = open(SNAP_DST, "rb").read() if os.path.exists(SNAP_DST) else b""
