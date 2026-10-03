@@ -95,6 +95,8 @@ table.pos td:first-child { text-align: left; color: #c9cdd6; font-weight: 600; }
 .etag-sig { background: rgba(240,185,11,.14); color: #f0b90b; }
 .etag-fill { background: rgba(46,189,133,.14); color: #2ebd85; }
 .etag-cmd { background: rgba(122,127,140,.16); color: #8b93a5; }
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
 @media (max-width: 768px) {
   div[data-testid="column"] { min-width: 100% !important; }
 }
