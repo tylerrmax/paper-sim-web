@@ -76,10 +76,14 @@ table.pos td:first-child { text-align: left; color: #c9cdd6; font-weight: 600; }
 }
 .tape { overflow: hidden; white-space: nowrap; border-top: 1px solid #161b24;
         border-bottom: 1px solid #161b24; padding: 7px 0; margin: 0 0 14px;
-        background: #0e1218; }
-.tape-inner { display: inline-block; animation: tapescroll 28s linear infinite; }
-@keyframes tapescroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        background: #0e1218; container-type: inline-size; }
+.tape-inner { display: inline-block; animation: tapesway 18s ease-in-out infinite alternate; }
+@keyframes tapesway {
+  from { transform: translateX(0); }
+  to { transform: translateX(min(0px, calc(100cqw - 100%))); }
+}
 .tape-item { display: inline-block; margin-right: 42px; font-size: 13px; color: #7a7f8c; }
+.tape-item:last-child { margin-right: 0; }
 .tape-item .num { color: #c9cdd6; }
 .ev-row { display: flex; align-items: baseline; padding: 6px 2px;
           border-bottom: 1px solid #161b24; font-size: 13px; }
@@ -174,8 +178,9 @@ def tape_html():
             items.append(f'{t["symbol"]} <span class="num">{px:{fmt}}</span>{tag}')
     if not items:
         return
+    # 每个标的只出现一次：内容超宽时左右摆动，不够宽时静止
     half = "".join(f'<span class="tape-item">{it}</span>' for it in items)
-    st.markdown(f'<div class="tape"><div class="tape-inner">{half}{half}</div></div>',
+    st.markdown(f'<div class="tape"><div class="tape-inner">{half}</div></div>',
                 unsafe_allow_html=True)
 
 
