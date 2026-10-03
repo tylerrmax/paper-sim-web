@@ -65,6 +65,16 @@ def main():
         except Exception as e:
             print(f"[{now}] 指令文件解析失败 {f}: {e}")
     if cmds:
+        # 归档已消费指令（网页展示"指令历史"；pending 仍按原流程消费删除）
+        done_dir = os.path.join(REPO, "commands", "done")
+        os.makedirs(done_dir, exist_ok=True)
+        for c in cmds:
+            dst = os.path.join(done_dir, f'{c["id"]}.json')
+            if not os.path.exists(dst):
+                rec = dict(c)
+                rec["done_ts"] = now
+                json.dump(rec, open(dst, "w", encoding="utf-8"),
+                          ensure_ascii=False)
         p = subprocess.run(
             [sys.executable, os.path.join(SIM, "apply_commands.py")],
             input=json.dumps(cmds, ensure_ascii=False),

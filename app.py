@@ -8,6 +8,7 @@
      服务端每 2 分钟轮询取回执行，约 2 分钟内生效。
 """
 import base64
+import glob
 import json
 import os
 import uuid
@@ -27,43 +28,58 @@ CSS = """
 html, body, [class*="css"] { font-variant-numeric: tabular-nums; }
 .num, .hero-num { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
                   font-variant-numeric: tabular-nums; }
-.hero-label { font-size: 13px; color: #888; margin-bottom: 2px; }
-.hero-num { font-size: 36px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.15; }
-.hero-note { font-size: 12px; color: #999; margin-top: 4px; }
-.up { color: #e5484d; } .down { color: #18a058; } .flat { color: #999; }
-.strip { border: 1px solid #f0e6c8; border-left: 3px solid #f5a623; border-radius: 8px;
-         padding: 10px 12px; margin: 10px 0; background: #fffdf6; }
-.strip-ok { border: 1px solid #f0f0f0; border-radius: 8px; padding: 8px 12px;
-            margin: 10px 0; color: #aaa; font-size: 13px; }
+.hero-label { font-size: 12px; color: #7a7f8c; margin-bottom: 2px; letter-spacing: 1px; }
+.hero-num { font-size: 34px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.15; }
+.hero-note { font-size: 12px; color: #5f6572; margin-top: 4px; }
+.up { color: #f6465d; } .down { color: #2ebd85; } .flat { color: #5f6572; }
+.strip { border: 1px solid rgba(240,185,11,.35); border-left: 3px solid #f0b90b; border-radius: 6px;
+         padding: 8px 12px; margin: 10px 0; background: rgba(240,185,11,.06); }
+.strip-ok { border: 1px solid #1e232e; border-radius: 6px; padding: 7px 12px;
+            margin: 10px 0; color: #7a7f8c; font-size: 13px; background: #10141b; }
 .strip-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
 .badge { display: inline-block; min-width: 22px; text-align: center; padding: 1px 8px;
-         border-radius: 999px; background: #f5a623; color: #fff;
+         border-radius: 999px; background: #f0b90b; color: #0b0e11;
          font-size: 12px; font-weight: 700; }
-.empty { padding: 14px 2px; }
-.empty b { display: block; font-size: 15px; color: #666; margin-bottom: 4px; }
-.empty span { font-size: 13px; color: #aaa; }
-.pill { display: inline-block; padding: 2px 12px; border-radius: 999px;
-        font-size: 12px; background: #f5f5f5; color: #666; margin-right: 6px; }
-.pill.run { background: #e6f6ec; color: #18a058; }
-.pill.pause { background: #fdeeee; color: #e5484d; }
-.sec { font-size: 16px; font-weight: 700; margin: 22px 0 8px; }
-.kv { display: flex; justify-content: space-between; padding: 7px 2px;
-      border-bottom: 1px solid #f5f5f5; font-size: 14px; }
-.kv .k { color: #888; } .kv .v { font-weight: 600; }
-.hairline { border: none; border-top: 1px solid #f0f0f0; margin: 18px 0; }
-.foot { font-size: 12px; color: #bbb; margin-top: 26px; }
+.empty { padding: 12px 2px; }
+.empty b { display: block; font-size: 14px; color: #aab; margin-bottom: 4px; }
+.empty span { font-size: 13px; color: #5f6572; }
+.pill { display: inline-block; padding: 2px 12px; border-radius: 4px;
+        font-size: 12px; background: #1e232e; color: #aab; margin-right: 6px; }
+.pill.run { background: rgba(46,189,133,.12); color: #2ebd85; }
+.pill.pause { background: rgba(246,70,93,.12); color: #f6465d; }
+.sec { font-size: 14px; font-weight: 700; margin: 16px 0 6px; letter-spacing: .5px; color: #c9cdd6; }
+.kv { display: flex; justify-content: space-between; padding: 5px 2px;
+      border-bottom: 1px solid #161b24; font-size: 13px; }
+.kv .k { color: #7a7f8c; } .kv .v { font-weight: 600; }
+.hairline { border: none; border-top: 1px solid #161b24; margin: 14px 0; }
+.foot { font-size: 12px; color: #4a4f5c; margin-top: 26px; }
 .sig-row { display: flex; align-items: center; justify-content: space-between;
-           padding: 8px 2px; border-bottom: 1px solid #f7f7f7; font-size: 14px; }
-.chart-label { font-size: 13px; color: #888; margin: 20px 0 6px; }
-.chart-legend { font-size: 12px; color: #888; margin-top: 6px; }
+           padding: 6px 2px; border-bottom: 1px solid #161b24; font-size: 13px; }
+.chart-label { font-size: 12px; color: #7a7f8c; margin: 16px 0 6px; letter-spacing: 1px; }
+.chart-legend { font-size: 12px; color: #7a7f8c; margin-top: 6px; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
 .livedot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-           background: #18a058; margin-right: 6px; animation: pulse 2s infinite; }
+           background: #2ebd85; margin-right: 6px; animation: pulse 2s infinite; }
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(24,160,88,.45); }
-  70% { box-shadow: 0 0 0 8px rgba(24,160,88,0); }
-  100% { box-shadow: 0 0 0 0 rgba(24,160,88,0); }
+  0% { box-shadow: 0 0 0 0 rgba(46,189,133,.45); }
+  70% { box-shadow: 0 0 0 8px rgba(46,189,133,0); }
+  100% { box-shadow: 0 0 0 0 rgba(46,189,133,0); }
 }
+.tape { overflow: hidden; white-space: nowrap; border-top: 1px solid #161b24;
+        border-bottom: 1px solid #161b24; padding: 7px 0; margin: 0 0 14px;
+        background: #0e1218; }
+.tape-inner { display: inline-block; animation: tapescroll 28s linear infinite; }
+@keyframes tapescroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.tape-item { display: inline-block; margin-right: 42px; font-size: 13px; color: #7a7f8c; }
+.tape-item .num { color: #c9cdd6; }
+.ev-row { display: flex; align-items: baseline; padding: 6px 2px;
+          border-bottom: 1px solid #161b24; font-size: 13px; }
+.ev-date { color: #5f6572; margin-right: 8px; white-space: nowrap; }
+.etag { display: inline-block; padding: 1px 8px; border-radius: 4px;
+        font-size: 12px; margin-right: 8px; white-space: nowrap; }
+.etag-sig { background: rgba(240,185,11,.14); color: #f0b90b; }
+.etag-fill { background: rgba(46,189,133,.14); color: #2ebd85; }
+.etag-cmd { background: rgba(122,127,140,.16); color: #8b93a5; }
 @media (max-width: 768px) {
   div[data-testid="column"] { min-width: 100% !important; }
 }
@@ -124,6 +140,28 @@ def _day_word(dt, now):
     if dd == 1:
         return "明日"
     return dt.strftime("%m-%d")
+
+
+def tape_html():
+    """顶部滚动行情条：持仓现价（按日K收盘）+ BTC 实时 + 账户净值。无涨跌幅数据，不编造。"""
+    items = []
+    live = btc_live()
+    if live:
+        items.append(f'BTC/USDT <span class="num">{live:,.1f}</span> '
+                     f'<span class="livedot" style="margin:0 0 1px 4px"></span>')
+    for p in snap.get("positions", []):
+        if p.get("symbol") == "BTCUSDT":
+            continue  # 已有实时，跳过收盘价避免重复
+        px = (p.get("market_value") or 0) / p["qty"] if p.get("qty") else None
+        if px:
+            items.append(f'{p["symbol"]} <span class="num">{px:,.3f}</span>')
+    for a in snap.get("accounts", []):
+        items.append(f'{a["account"]} <span class="num">{f2(a.get("nav"))}</span>')
+    if not items:
+        return
+    half = "".join(f'<span class="tape-item">{it}</span>' for it in items)
+    st.markdown(f'<div class="tape"><div class="tape-inner">{half}{half}</div></div>',
+                unsafe_allow_html=True)
 
 
 snap = load_snapshot()
@@ -195,8 +233,8 @@ def queue_command(kind, payload):
 # ---------- 净值走势（起点=100，日期对齐） ----------
 def nav_chart_svg(equity):
     series = []
-    for aid, label, color in (("sim_hk", "港股", "#1a1a1a"),
-                             ("sim_crypto", "加密", "#e5484d")):
+    for aid, label, color in (("sim_hk", "港股", "#e8e8e8"),
+                             ("sim_crypto", "加密", "#f0b90b")):
         pts = equity.get(aid) or []
         if len(pts) < 2 or not pts[0][1]:
             continue
@@ -231,7 +269,7 @@ def nav_chart_svg(equity):
     if lo < 100 < hi:
         y0 = Y(100)
         parts.append(f'<line x1="0" y1="{y0:.1f}" x2="{W}" y2="{y0:.1f}" '
-                     'stroke="#ddd" stroke-dasharray="4 3"/>')
+                     'stroke="#2a2e39" stroke-dasharray="4 3"/>')
     for label, color, vals, start in aligned:
         pts_str = " ".join(f"{X(start + i):.1f},{Y(v):.1f}"
                            for i, v in enumerate(vals))
@@ -242,13 +280,13 @@ def nav_chart_svg(equity):
         parts.append(f'<text x="{ex - 5:.1f}" y="{ey - 8:.1f}" font-size="11" '
                      f'fill="{color}" text-anchor="end">{vals[-1]:.1f}</text>')
     parts.append(f'<text x="2" y="{Y(hi) + 11:.1f}" font-size="10" '
-                 f'fill="#aaa">{hi:.1f}</text>')
+                 f'fill="#5f6572">{hi:.1f}</text>')
     parts.append(f'<text x="2" y="{Y(lo) - 3:.1f}" font-size="10" '
-                 f'fill="#aaa">{lo:.1f}</text>')
+                 f'fill="#5f6572">{lo:.1f}</text>')
     parts.append(f'<text x="2" y="{H - 6:.1f}" font-size="10" '
-                 f'fill="#aaa">{dates[0]}</text>')
+                 f'fill="#5f6572">{dates[0]}</text>')
     parts.append(f'<text x="{W - 2:.1f}" y="{H - 6:.1f}" font-size="10" '
-                 f'fill="#aaa" text-anchor="end">{dates[-1]}</text>')
+                 f'fill="#5f6572" text-anchor="end">{dates[-1]}</text>')
     svg = (f'<svg viewBox="0 0 {W} {H}" style="width:100%;height:auto">'
            f'{"".join(parts)}</svg>')
     legend = " &nbsp; ".join(
@@ -261,6 +299,7 @@ def nav_chart_svg(equity):
 
 
 # ---------- 页眉 ----------
+tape_html()
 st.markdown("### 模拟盘")
 now = datetime.now()
 age = now - datetime.fromtimestamp(os.path.getmtime(SNAP))
@@ -307,39 +346,111 @@ if now.date() < date(2026, 10, 8):
 st.markdown(f'<div class="strip-ok">下一步 · {" · ".join(_ups)}</div>',
             unsafe_allow_html=True)
 
-# ---------- 净值走势（组合锚点） ----------
-nav_chart_svg(snap.get("equity", {}) or {})
+# ---------- 终端区：净值 + 待审批 ----------
+col_chart, col_panel = st.columns([2, 1])
+with col_chart:
+    nav_chart_svg(snap.get("equity", {}) or {})
+with col_panel:
+    pending_panel(pend)
 
 col_stock, col_crypto = st.columns(2)
 
 
 # ---------- 通用组件 ----------
-def pending_strip(items, zone):
-    """非警报式细条：计数 + 行内批准/跳过；零状态收成 hairline。"""
+ACCT_CN = {"sim_a": "A股", "sim_hk": "港股", "sim_crypto": "加密"}
+
+
+def pending_panel(items):
+    """待审批面板（订单区）：全账户合并，按日期倒序；行内批准/跳过。"""
+    items = sorted(items, key=lambda p: p.get("date", ""), reverse=True)
     if not items:
-        st.markdown('<div class="strip-ok">暂无待审批信号</div>',
+        st.markdown('<div class="sec">待审批</div>', unsafe_allow_html=True)
+        st.markdown('<div class="empty"><b>队列为空</b>'
+                    '<span>有信号会在这里出现，等你批准</span></div>',
                     unsafe_allow_html=True)
         return
-    st.markdown(
-        f'<div class="strip"><div class="strip-title">'
-        f'<span class="badge">{len(items)}</span> 待审批 · {zone}</div></div>',
-        unsafe_allow_html=True)
+    st.markdown(f'<div class="sec">待审批 <span class="badge">{len(items)}</span></div>',
+                unsafe_allow_html=True)
     for p in items:
-        r1, r2, r3 = st.columns([5, 2, 2])
-        with r1:
-            st.markdown(
-                f'<div class="sig-row"><span class="num">{p["date"]} '
-                f'{p["symbol"]} {side_cn(p["side"])} @{f2(p.get("price"))}'
-                f'</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="sig-row"><span class="num">{p["date"]} {p["symbol"]} '
+            f'{side_cn(p["side"])} @{f2(p.get("price"))}</span>'
+            f'<span class="flat" style="font-size:12px">'
+            f'{ACCT_CN.get(p.get("account"), "")}</span></div>',
+            unsafe_allow_html=True)
+        b1, b2 = st.columns(2)
         key = f'{p["account"]}_{p["date"]}_{p["symbol"]}_{p["side"]}'
-        if r2.button("批准", key="ap_" + key):
+        if b1.button("批准", key="ap_" + key, width="stretch"):
             if queue_command("approve", {"date": p["date"], "account": p["account"],
                                          "symbol": p["symbol"], "side": p["side"]}):
                 st.rerun()
-        if r3.button("跳过", key="sk_" + key):
+        if b2.button("跳过", key="sk_" + key, width="stretch"):
             if queue_command("skip", {"date": p["date"], "account": p["account"],
                                       "symbol": p["symbol"], "side": p["side"]}):
                 st.rerun()
+
+
+def event_stream():
+    """统一事件流：信号 + 成交，按日期倒序。"""
+    ev = []
+    for s in snap.get("signals", []) or []:
+        ev.append((s.get("date", ""), "sig", "信号",
+                   f'{s.get("symbol")} {side_cn(s.get("side"))} @{f2(s.get("price"))}'))
+    for f in snap.get("fills", []) or []:
+        ev.append((f.get("date", ""), "fill", "成交",
+                   f'{f.get("symbol")} {side_cn(f.get("side"))} '
+                   f'{(f.get("qty") or 0):g} @{f2(f.get("price"))}'))
+    ev.sort(key=lambda e: e[0], reverse=True)
+    st.markdown('<div class="sec">事件流</div>', unsafe_allow_html=True)
+    if not ev:
+        st.markdown('<div class="empty"><b>暂无事件</b>'
+                    '<span>信号与成交会出现在这里</span></div>', unsafe_allow_html=True)
+        return
+    for d, cls, tag, txt in ev[:25]:
+        st.markdown(
+            f'<div class="ev-row"><span class="ev-date num">{d}</span>'
+            f'<span class="etag etag-{cls}">{tag}</span>'
+            f'<span class="num">{txt}</span></div>', unsafe_allow_html=True)
+
+
+CMD_CN = {"set_status": "运行", "set_mode": "模式",
+          "approve": "批准", "skip": "跳过"}
+
+
+def command_log():
+    """指令历史：已执行的网页指令归档（commands/done/）。"""
+    st.markdown('<div class="sec">指令历史</div>', unsafe_allow_html=True)
+    files = sorted(glob.glob(os.path.join(BASE, "commands", "done", "*.json")),
+                   reverse=True)[:10]
+    recs = []
+    for fp in files:
+        try:
+            recs.append(json.load(open(fp, encoding="utf-8")))
+        except Exception:
+            continue
+    if not recs:
+        st.markdown('<div class="empty"><b>暂无记录</b>'
+                    '<span>你在页面点的操作会记在这里</span></div>', unsafe_allow_html=True)
+        return
+    for c in recs:
+        kind, ts = c.get("kind", ""), c.get("ts", "")
+        try:
+            pl = json.loads(c.get("payload_json", "{}") or "{}")
+        except Exception:
+            pl = {}
+        if kind == "set_mode":
+            txt = "切自动" if pl.get("mode") == "auto" else "切手动"
+        elif kind == "set_status":
+            txt = "暂停" if pl.get("status") == "paused" else "开始"
+        elif kind in ("approve", "skip"):
+            txt = (f'{"批准" if kind == "approve" else "跳过"} '
+                   f'{pl.get("symbol")} {side_cn(pl.get("side"))}')
+        else:
+            txt = kind
+        st.markdown(
+            f'<div class="ev-row"><span class="ev-date num">{ts[5:16]}</span>'
+            f'<span class="etag etag-cmd">{CMD_CN.get(kind, kind)}</span>'
+            f'<span>{txt}</span></div>', unsafe_allow_html=True)
 
 
 def account_card(aid, label, not_started_text=None):
@@ -407,9 +518,6 @@ with col_stock:
         '明细仍按原生币种独立记账</div>', unsafe_allow_html=True)
     st.markdown('<hr class="hairline"/>', unsafe_allow_html=True)
 
-    pend_stock = [p for p in pend if p.get("account") in ("sim_a", "sim_hk")]
-    pending_strip(pend_stock, "股票队列")
-
     a_not_started = (asof < VAL_START_A and
                      not [f for f in snap.get("fills", []) if f.get("account") == "sim_a"])
     account_card("sim_a", "A股",
@@ -442,9 +550,14 @@ with col_crypto:
             unsafe_allow_html=True)
     st.markdown('<hr class="hairline"/>', unsafe_allow_html=True)
 
-    pend_crypto = [p for p in pend if p.get("account") == "sim_crypto"]
-    pending_strip(pend_crypto, "加密队列")
     account_card("sim_crypto", "加密账户")
+
+# ---------- 事件流 / 指令历史 ----------
+col_ev, col_cmd = st.columns(2)
+with col_ev:
+    event_stream()
+with col_cmd:
+    command_log()
 
 # ---------- 轮动门 / 毕业进度 ----------
 col_rg, col_grad = st.columns(2)
