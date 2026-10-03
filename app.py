@@ -421,6 +421,73 @@ def kline_svg(kl, ma=20, w=340, h=132):
             f'{"".join(parts)}</svg>')
 
 
+def validation_dashboard():
+    """验证仪表盘：毕业标准记分牌（数据来自管线 graduation，本页只展示）。"""
+    g = snap.get("graduation", {}) or {}
+    tg = g.get("targets", {}) or {}
+    accts_g = g.get("accounts", {}) or {}
+    wlr_t = tg.get("win_loss_ratio") or 3.0
+    mdd_t = tg.get("max_drawdown") or 0.10
+    smin, smax = tg.get("sample_min", 20), tg.get("sample_max", 30)
+    labels = (("sim_a", "A股"), ("sim_hk", "港股"), ("sim_crypto", "加密"))
+    st.markdown('<div class="sec">验证仪表盘</div>', unsafe_allow_html=True)
+
+    rows = []
+    # 样本进度
+    tds = []
+    for aid, _ in labels:
+        n = (accts_g.get(aid) or {}).get("round_trips") or 0
+        cls = "up" if n >= smin else ("flat" if n == 0 else "")
+        tds.append(f'<td class="num {cls}">{n} / {smin}–{smax}笔</td>')
+    rows.append(f'<tr><td>样本进度</td>{"".join(tds)}'
+                f'<td class="num flat">{smin}–{smax}笔</td></tr>')
+    # 期望值/笔（>0）
+    tds = []
+    for aid, _ in labels:
+        v = (accts_g.get(aid) or {}).get("expectancy")
+        if v is None:
+            tds.append('<td class="num flat">—</td>')
+        else:
+            cls = "up" if v > 0 else ("down" if v < 0 else "flat")
+            tds.append(f'<td class="num {cls}">{v:+,.2f}</td>')
+    rows.append(f'<tr><td>期望值/笔</td>{"".join(tds)}'
+                '<td class="num flat">&gt; 0</td></tr>')
+    # 盈亏比（硬线）
+    tds = []
+    for aid, _ in labels:
+        v = (accts_g.get(aid) or {}).get("win_loss_ratio")
+        if v is None:
+            tds.append('<td class="num flat">—</td>')
+        else:
+            tds.append(f'<td class="num {"up" if v >= wlr_t else "down"}">{v:,.2f}</td>')
+    rows.append(f'<tr><td>盈亏比</td>{"".join(tds)}'
+                f'<td class="num flat">≥ {wlr_t:g}（硬线）</td></tr>')
+    # 盈利因子（参考）
+    tds = []
+    for aid, _ in labels:
+        v = (accts_g.get(aid) or {}).get("profit_factor")
+        tds.append(f'<td class="num">{"—" if v is None else f"{v:,.2f}"}</td>')
+    rows.append(f'<tr><td>盈利因子</td>{"".join(tds)}'
+                '<td class="num flat">参考</td></tr>')
+    # 最大回撤
+    tds = []
+    for aid, _ in labels:
+        v = (accts_g.get(aid) or {}).get("max_drawdown")
+        if v is None:
+            tds.append('<td class="num flat">—</td>')
+        else:
+            tds.append(f'<td class="num {"up" if v <= mdd_t else "down"}">'
+                       f'{v * 100:.1f}%</td>')
+    rows.append(f'<tr><td>最大回撤</td>{"".join(tds)}'
+                f'<td class="num flat">≤ {mdd_t * 100:.0f}%</td></tr>')
+
+    st.markdown(
+        '<table class="pos"><thead><tr><th>指标</th><th>A股</th><th>港股</th>'
+        '<th>加密</th><th>目标</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>', unsafe_allow_html=True)
+    st.caption(g.get("execution_note", ""))
+
+
 # ---------- 通用组件 ----------
 ACCT_CN = {"sim_a": "A股", "sim_hk": "港股", "sim_crypto": "加密"}
 
@@ -716,41 +783,19 @@ with col_ev:
 with col_cmd:
     command_log()
 
-# ---------- 轮动门 / 毕业进度 ----------
-col_rg, col_grad = st.columns(2)
-with col_rg:
-    rg = snap.get("rotation_gate", {}) or {}
-    st.markdown(f'<div class="sec">轮动门槛（{rg.get("met", 0)}/{rg.get("total", 3)} 项满足）</div>', unsafe_allow_html=True)
-    for it in rg.get("items", []):
-        st.markdown(
-            f'<div class="kv"><span class="k">{it["label"]} '
-            f'<span class="num">{it["value"] if it["value"] is not None else "—"}{it.get("unit", "")}</span></span>'
-            f'<span class="v">{it.get("status", "")}</span></div>',
-            unsafe_allow_html=True)
-    st.caption(rg.get("note", ""))
+# ---------- 验证仪表盘 ----------
+validation_dashboard()
 
-with col_grad:
-    st.markdown('<div class="sec">毕业进度</div>', unsafe_allow_html=True)
-    g = snap.get("graduation", {}) or {}
-    tg = g.get("targets", {})
-    for aid, label in (("sim_a", "A股"), ("sim_hk", "港股"), ("sim_crypto", "加密")):
-        ga = (g.get("accounts", {}) or {}).get(aid, {})
-        n = ga.get("round_trips") or 0
-        wlr = ga.get("win_loss_ratio")
-        mdd = ga.get("max_drawdown")
-        wlr_ok = wlr is not None and wlr >= (tg.get("win_loss_ratio") or 3.0)
-        mdd_ok = mdd is not None and mdd <= (tg.get("max_drawdown") or 0.10)
-        st.markdown(
-            f'<div class="kv"><span class="k">{label}'
-            f'<span class="num">（{n}/{tg.get("sample_min", 20)}–{tg.get("sample_max", 30)}笔）</span></span>'
-            f'<span class="v num">盈亏比 '
-            f'<span class="{"up" if wlr_ok else "flat"}">{f2(wlr)}</span>'
-            f'（硬线≥{tg.get("win_loss_ratio", 3.0):g}） · 回撤 '
-            f'<span class="{"up" if mdd_ok else "flat"}">'
-            f'{f"{mdd * 100:.1f}%" if mdd is not None else "—"}</span>'
-            f'（≤{(tg.get("max_drawdown") or 0.10) * 100:.0f}%）</span></div>',
-            unsafe_allow_html=True)
-    st.caption(g.get("execution_note", ""))
+# ---------- 轮动门槛 ----------
+rg = snap.get("rotation_gate", {}) or {}
+st.markdown(f'<div class="sec">轮动门槛（{rg.get("met", 0)}/{rg.get("total", 3)} 项满足）</div>', unsafe_allow_html=True)
+for it in rg.get("items", []):
+    st.markdown(
+        f'<div class="kv"><span class="k">{it["label"]} '
+        f'<span class="num">{it["value"] if it["value"] is not None else "—"}{it.get("unit", "")}</span></span>'
+        f'<span class="v">{it.get("status", "")}</span></div>',
+        unsafe_allow_html=True)
+st.caption(rg.get("note", ""))
 
 st.markdown(
     f'<div class="foot">规则版本 {snap.get("rule_version", "—")} · '
