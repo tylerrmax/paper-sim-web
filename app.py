@@ -143,7 +143,7 @@ def _day_word(dt, now):
 
 
 def tape_html():
-    """顶部滚动行情条：持仓现价（按日K收盘）+ BTC 实时 + 账户净值。无涨跌幅数据，不编造。"""
+    """顶部滚动行情条：只保留标的价格（持仓现价按日K收盘 + BTC 实时）。"""
     items = []
     live = btc_live()
     if live:
@@ -155,8 +155,6 @@ def tape_html():
         px = (p.get("market_value") or 0) / p["qty"] if p.get("qty") else None
         if px:
             items.append(f'{p["symbol"]} <span class="num">{px:,.3f}</span>')
-    for a in snap.get("accounts", []):
-        items.append(f'{a["account"]} <span class="num">{f2(a.get("nav"))}</span>')
     if not items:
         return
     half = "".join(f'<span class="tape-item">{it}</span>' for it in items)
@@ -296,64 +294,6 @@ def nav_chart_svg(equity):
                 unsafe_allow_html=True)
     st.markdown(svg, unsafe_allow_html=True)
     st.markdown(f'<div class="chart-legend">{legend}</div>', unsafe_allow_html=True)
-
-
-# ---------- 页眉 ----------
-tape_html()
-st.markdown("### 模拟盘")
-now = datetime.now()
-age = now - datetime.fromtimestamp(os.path.getmtime(SNAP))
-if age < timedelta(hours=1):
-    age_txt = f"{max(int(age.total_seconds() // 60), 1)}分钟前"
-elif age < timedelta(days=1):
-    age_txt = f"{int(age.total_seconds() // 3600)}小时前"
-else:
-    age_txt = f"{age.days}天前"
-st.caption(f"数据截至 {asof} · 页面{age_txt}更新 · 每日17:12更新数据 · "
-           f"规则 {snap.get('rule_version', '—')}")
-stt, mod = control.get("status"), control.get("mode")
-dot = '<span class="livedot"></span>' if stt == "running" else ""
-st.markdown(
-    f'<span class="pill {"run" if stt == "running" else "pause"}">{dot}'
-    f'{"运行中" if stt == "running" else "已暂停"}</span>'
-    f'<span class="pill">{"自动" if mod == "auto" else "手动"}</span>',
-    unsafe_allow_html=True)
-
-# ---------- 控制条 ----------
-c1, c2 = st.columns(2)
-if c1.button("⏸ 暂停" if stt == "running" else "▶ 开始", width="stretch"):
-    if queue_command("set_status", {"status": "paused" if stt == "running" else "running"}):
-        st.rerun()
-if c2.button("切手动" if mod == "auto" else "切自动", width="stretch"):
-    if queue_command("set_mode", {"mode": "manual" if mod == "auto" else "auto"}):
-        st.rerun()
-st.caption("操作约2分钟内生效")
-
-# ---------- 下一步（前瞻） ----------
-_ups = []
-_n8 = now.replace(hour=8, minute=0, second=0, microsecond=0)
-if _n8 <= now:
-    _n8 += timedelta(days=1)
-_ups.append(f"BTC日K{_day_word(_n8, now)}08:00收盘后更新")
-_d = now.date()
-while True:
-    _d += timedelta(days=1)
-    if _d.weekday() < 5:
-        break
-_ups.append(f"港股下个交易日{_d.strftime('%m-%d')}")
-if now.date() < date(2026, 10, 8):
-    _ups.append("A股10-08接入验证")
-st.markdown(f'<div class="strip-ok">下一步 · {" · ".join(_ups)}</div>',
-            unsafe_allow_html=True)
-
-# ---------- 终端区：净值 + 待审批 ----------
-col_chart, col_panel = st.columns([2, 1])
-with col_chart:
-    nav_chart_svg(snap.get("equity", {}) or {})
-with col_panel:
-    pending_panel(pend)
-
-col_stock, col_crypto = st.columns(2)
 
 
 # ---------- 通用组件 ----------
@@ -505,6 +445,65 @@ def account_card(aid, label, not_started_text=None):
                  for f in fills], use_container_width=True, hide_index=True)
         else:
             st.caption("暂无成交")
+
+
+
+# ---------- 页眉 ----------
+tape_html()
+st.markdown("### 模拟盘")
+now = datetime.now()
+age = now - datetime.fromtimestamp(os.path.getmtime(SNAP))
+if age < timedelta(hours=1):
+    age_txt = f"{max(int(age.total_seconds() // 60), 1)}分钟前"
+elif age < timedelta(days=1):
+    age_txt = f"{int(age.total_seconds() // 3600)}小时前"
+else:
+    age_txt = f"{age.days}天前"
+st.caption(f"数据截至 {asof} · 页面{age_txt}更新 · 每日17:12更新数据 · "
+           f"规则 {snap.get('rule_version', '—')}")
+stt, mod = control.get("status"), control.get("mode")
+dot = '<span class="livedot"></span>' if stt == "running" else ""
+st.markdown(
+    f'<span class="pill {"run" if stt == "running" else "pause"}">{dot}'
+    f'{"运行中" if stt == "running" else "已暂停"}</span>'
+    f'<span class="pill">{"自动" if mod == "auto" else "手动"}</span>',
+    unsafe_allow_html=True)
+
+# ---------- 控制条 ----------
+c1, c2 = st.columns(2)
+if c1.button("⏸ 暂停" if stt == "running" else "▶ 开始", width="stretch"):
+    if queue_command("set_status", {"status": "paused" if stt == "running" else "running"}):
+        st.rerun()
+if c2.button("切手动" if mod == "auto" else "切自动", width="stretch"):
+    if queue_command("set_mode", {"mode": "manual" if mod == "auto" else "auto"}):
+        st.rerun()
+st.caption("操作约2分钟内生效")
+
+# ---------- 下一步（前瞻） ----------
+_ups = []
+_n8 = now.replace(hour=8, minute=0, second=0, microsecond=0)
+if _n8 <= now:
+    _n8 += timedelta(days=1)
+_ups.append(f"BTC日K{_day_word(_n8, now)}08:00收盘后更新")
+_d = now.date()
+while True:
+    _d += timedelta(days=1)
+    if _d.weekday() < 5:
+        break
+_ups.append(f"港股下个交易日{_d.strftime('%m-%d')}")
+if now.date() < date(2026, 10, 8):
+    _ups.append("A股10-08接入验证")
+st.markdown(f'<div class="strip-ok">下一步 · {" · ".join(_ups)}</div>',
+            unsafe_allow_html=True)
+
+# ---------- 终端区：净值 + 待审批 ----------
+col_chart, col_panel = st.columns([2, 1])
+with col_chart:
+    nav_chart_svg(snap.get("equity", {}) or {})
+with col_panel:
+    pending_panel(pend)
+
+col_stock, col_crypto = st.columns(2)
 
 
 # ---------- 股票 ----------
