@@ -9,6 +9,8 @@
 """
 import base64
 import glob
+import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -101,7 +103,27 @@ table.pos td:first-child { text-align: left; color: #c9cdd6; font-weight: 600; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-# ---------- 密码门 ----------
+# ---------- 密码门（含 30 天记住我） ----------
+REMEMBER_COOKIE = "vterm_remember"
+REMEMBER_DAYS = 30
+
+
+def _remember_token():
+    pw_cfg = st.secrets.get("APP_PASSWORD", "")
+    if not pw_cfg:
+        return None
+    return hmac.new(pw_cfg.encode("utf-8"), b"vterm-remember-v1",
+                    hashlib.sha256).hexdigest()
+
+
+def _cookie_mgr():
+    try:
+        from extra_streamlit_components import CookieManager
+        return CookieManager()
+    except Exception:
+        return None
+
+
 def check_auth():
     pw_cfg = st.secrets.get("APP_PASSWORD", "")
     if not pw_cfg:
@@ -109,11 +131,28 @@ def check_auth():
         st.stop()
     if st.session_state.get("authed"):
         return
+    # 记住我：本机 cookie 命中则免登（换密码后旧 cookie 自动失效）
+    mgr = _cookie_mgr()
+    if mgr is not None:
+        try:
+            cookies = mgr.get_all() or {}
+        except Exception:
+            cookies = {}
+        tok = _remember_token()
+        if tok and hmac.compare_digest(cookies.get(REMEMBER_COOKIE) or "", tok):
+            st.session_state["authed"] = True
+            return
     st.markdown("### 验证终端")
     pw = st.text_input("访问密码", type="password")
     if st.button("进入", type="primary"):
         if pw == pw_cfg:
             st.session_state["authed"] = True
+            if mgr is not None:
+                try:
+                    mgr.set(REMEMBER_COOKIE, _remember_token(),
+                            expires_at=datetime.now() + timedelta(days=REMEMBER_DAYS))
+                except Exception:
+                    pass
             st.rerun()
         else:
             st.error("密码错误")
