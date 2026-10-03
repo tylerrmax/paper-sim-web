@@ -246,6 +246,16 @@ def f2(x):
     return "—" if x is None else f"{x:,.2f}"
 
 
+def fpx(x):
+    """价格显示：大数用千分位，小数保留4位去尾零，永不科学计数法。"""
+    if x is None:
+        return "—"
+    if abs(x) >= 1000:
+        return f"{x:,.2f}"
+    s = f"{x:,.4f}".rstrip("0").rstrip(".")
+    return s if s not in ("", "-") else "0"
+
+
 def pnl_html(x):
     if x is None:
         return '<span class="num flat">—</span>'
@@ -406,7 +416,7 @@ def kline_svg(kl, ma=20, w=340, h=132):
     parts.append(f'<line x1="0" y1="{yl:.1f}" x2="{w}" y2="{yl:.1f}" '
                  'stroke="#8a94a6" stroke-width="0.8" stroke-dasharray="3,3"/>')
     parts.append(f'<text x="{w - 2:.1f}" y="{yl - 4:.1f}" font-size="10" '
-                 f'fill="#8a94a6" text-anchor="end">{closes[-1]:,.4g}</text>')
+                 f'fill="#8a94a6" text-anchor="end">{fpx(closes[-1])}</text>')
     return (f'<svg viewBox="0 0 {w} {h}" style="width:100%;height:auto;display:block">'
             f'{"".join(parts)}</svg>')
 
@@ -549,8 +559,8 @@ def account_card(aid, label, not_started_text=None):
             rows.append(
                 f'<tr><td>{p["symbol"]}</td>'
                 f'<td class="num">{qty:g}</td>'
-                f'<td class="num">{cost:,.4g}</td>'
-                f'<td class="num">{last:,.4g}</td>'
+                f'<td class="num">{fpx(cost)}</td>'
+                f'<td class="num">{fpx(last)}</td>'
                 f'<td class="num {cls}">{pnl:+,.2f}</td>'
                 f'<td class="num {cls}">'
                 f'{f"{ret:+.2f}%" if ret is not None else "—"}</td></tr>')
