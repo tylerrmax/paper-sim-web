@@ -11,7 +11,7 @@ import base64
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, date
 
 import requests
 import streamlit as st
@@ -57,6 +57,13 @@ html, body, [class*="css"] { font-variant-numeric: tabular-nums; }
 .chart-label { font-size: 13px; color: #888; margin: 20px 0 6px; }
 .chart-legend { font-size: 12px; color: #888; margin-top: 6px; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.livedot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+           background: #18a058; margin-right: 6px; animation: pulse 2s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(24,160,88,.45); }
+  70% { box-shadow: 0 0 0 8px rgba(24,160,88,0); }
+  100% { box-shadow: 0 0 0 0 rgba(24,160,88,0); }
+}
 @media (max-width: 768px) {
   div[data-testid="column"] { min-width: 100% !important; }
 }
@@ -96,6 +103,27 @@ def load_snapshot():
         return json.load(open(SNAP, encoding="utf-8"))
     except Exception:
         return None
+
+
+@st.cache_data(ttl=60)
+def btc_live():
+    """BTC/USDT 实时参考价（Binance 公开行情，仅展示，不进策略）。"""
+    try:
+        r = requests.get("https://data-api.binance.vision/api/v3/ticker/price",
+                         params={"symbol": "BTCUSDT"}, timeout=5)
+        r.raise_for_status()
+        return float(r.json()["price"])
+    except Exception:
+        return None
+
+
+def _day_word(dt, now):
+    dd = (dt.date() - now.date()).days
+    if dd <= 0:
+        return "今日"
+    if dd == 1:
+        return "明日"
+    return dt.strftime("%m-%d")
 
 
 snap = load_snapshot()
@@ -234,10 +262,20 @@ def nav_chart_svg(equity):
 
 # ---------- 页眉 ----------
 st.markdown("### 模拟盘")
-st.caption(f"数据截至 {asof} · 规则 {snap.get('rule_version', '—')}")
+now = datetime.now()
+age = now - datetime.fromtimestamp(os.path.getmtime(SNAP))
+if age < timedelta(hours=1):
+    age_txt = f"{max(int(age.total_seconds() // 60), 1)}分钟前"
+elif age < timedelta(days=1):
+    age_txt = f"{int(age.total_seconds() // 3600)}小时前"
+else:
+    age_txt = f"{age.days}天前"
+st.caption(f"数据截至 {asof} · 页面{age_txt}更新 · 每日17:12更新数据 · "
+           f"规则 {snap.get('rule_version', '—')}")
 stt, mod = control.get("status"), control.get("mode")
+dot = '<span class="livedot"></span>' if stt == "running" else ""
 st.markdown(
-    f'<span class="pill {"run" if stt == "running" else "pause"}">'
+    f'<span class="pill {"run" if stt == "running" else "pause"}">{dot}'
     f'{"运行中" if stt == "running" else "已暂停"}</span>'
     f'<span class="pill">{"自动" if mod == "auto" else "手动"}</span>',
     unsafe_allow_html=True)
@@ -251,6 +289,23 @@ if c2.button("切手动" if mod == "auto" else "切自动", width="stretch"):
     if queue_command("set_mode", {"mode": "manual" if mod == "auto" else "auto"}):
         st.rerun()
 st.caption("操作约2分钟内生效")
+
+# ---------- 下一步（前瞻） ----------
+_ups = []
+_n8 = now.replace(hour=8, minute=0, second=0, microsecond=0)
+if _n8 <= now:
+    _n8 += timedelta(days=1)
+_ups.append(f"BTC日K{_day_word(_n8, now)}08:00收盘后更新")
+_d = now.date()
+while True:
+    _d += timedelta(days=1)
+    if _d.weekday() < 5:
+        break
+_ups.append(f"港股下个交易日{_d.strftime('%m-%d')}")
+if now.date() < date(2026, 10, 8):
+    _ups.append("A股10-08接入验证")
+st.markdown(f'<div class="strip-ok">下一步 · {" · ".join(_ups)}</div>',
+            unsafe_allow_html=True)
 
 # ---------- 净值走势（组合锚点） ----------
 nav_chart_svg(snap.get("equity", {}) or {})
@@ -369,6 +424,22 @@ with col_crypto:
     st.markdown(f'<div class="hero-num num">{f2(a.get("nav"))}</div>', unsafe_allow_html=True)
     st.markdown('<div class="hero-note">每日更新一次（UTC 日K收盘后）</div>',
                 unsafe_allow_html=True)
+    _live = btc_live()
+    _bp = next((p for p in snap.get("positions", [])
+                if p.get("account") == "sim_crypto"
+                and p.get("symbol") == "BTCUSDT"), None)
+    if _live and _bp and _bp.get("qty"):
+        _close = (_bp.get("market_value") or 0) / _bp["qty"]
+        _chg = (_live - _close) / _close * 100 if _close else 0
+        _cls = "up" if _chg > 0 else ("down" if _chg < 0 else "flat")
+        _arw = "▲" if _chg > 0 else ("▼" if _chg < 0 else "")
+        st.markdown(
+            f'<div class="hero-note">BTC 实时参考 '
+            f'<span class="num">{_live:,.1f}</span> · 持仓参考 '
+            f'<span class="num">{_bp["qty"] * _live:,.2f}</span> '
+            f'<span class="num {_cls}">{_arw} {_chg:+.2f} %</span>'
+            f'（vs 日K收盘，仅参考，不进策略）</div>',
+            unsafe_allow_html=True)
     st.markdown('<hr class="hairline"/>', unsafe_allow_html=True)
 
     pend_crypto = [p for p in pend if p.get("account") == "sim_crypto"]
