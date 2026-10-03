@@ -560,8 +560,8 @@ else:
 stt, mod = control.get("status"), control.get("mode")
 dot = '<span class="livedot"></span>' if stt == "running" else ""
 
-# ---------- 控制条：一排并列（状态 / 模式 / 说明 / 操作） ----------
-p1, p2, p3, b1, b2 = st.columns([0.9, 0.9, 3.4, 1, 1])
+# ---------- 控制条：一排并列（状态 / 模式 / 操作） ----------
+p1, p2, _, b1, b2 = st.columns([0.9, 0.9, 3.4, 1, 1])
 with p1:
     st.markdown(
         f'<span class="pill {"run" if stt == "running" else "pause"}">{dot}'
@@ -569,9 +569,6 @@ with p1:
         unsafe_allow_html=True)
 with p2:
     st.markdown(f'<span class="pill">{"自动" if mod == "auto" else "手动"}</span>',
-                unsafe_allow_html=True)
-with p3:
-    st.markdown('<div class="hero-note" style="margin-top:7px">操作约2分钟内生效</div>',
                 unsafe_allow_html=True)
 if b1.button("⏸ 暂停" if stt == "running" else "▶ 开始", width="stretch"):
     if queue_command("set_status", {"status": "paused" if stt == "running" else "running"}):
