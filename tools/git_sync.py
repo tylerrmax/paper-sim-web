@@ -112,19 +112,33 @@ def main():
         if data is not None:
             # 公开仓库隐私：去掉实盘镜像（真实持仓），只留模拟盘数据
             data.pop("real_mirror", None)
-            # 滚动条：注入全跟踪标的最新收盘价（只读 DB，不改冻结系统）
+            # 滚动条 + K线：注入全跟踪标的最新收盘/涨跌幅 + 近60根日K（只读 DB，不改冻结系统）
             try:
                 db = sqlite3.connect(os.path.join(SIM, "db", "sim.db"))
-                rows = db.execute(
-                    "SELECT symbol, close FROM market_data "
+                latest = db.execute(
+                    "SELECT symbol, date, close FROM market_data "
                     "WHERE (symbol, date) IN "
                     "(SELECT symbol, MAX(date) FROM market_data GROUP BY symbol)"
                 ).fetchall()
+                tape, klines = [], {}
+                for s, d, c in sorted(latest):
+                    prev = db.execute(
+                        "SELECT close FROM market_data "
+                        "WHERE symbol=? AND date<? ORDER BY date DESC LIMIT 1",
+                        (s, d)).fetchone()
+                    chg = (c / prev[0] - 1) * 100 if prev and prev[0] else None
+                    tape.append({"symbol": s, "price": c, "change_pct": chg})
+                    krows = db.execute(
+                        "SELECT date, open, high, low, close FROM market_data "
+                        "WHERE symbol=? ORDER BY date DESC LIMIT 60",
+                        (s,)).fetchall()
+                    klines[s] = [[r[0][5:], r[1], r[2], r[3], r[4]]
+                                 for r in reversed(krows)]
                 db.close()
-                data["tape"] = [{"symbol": s, "price": c}
-                                for s, c in sorted(rows)]
+                data["tape"] = tape
+                data["klines"] = klines
             except Exception as e:
-                print(f"[{now}] tape 行情注入失败: {e}")
+                print(f"[{now}] tape/K线注入失败: {e}")
             new = json.dumps(data, ensure_ascii=False,
                              separators=(",", ":")).encode("utf-8")
             old = open(SNAP_DST, "rb").read() if os.path.exists(SNAP_DST) else b""

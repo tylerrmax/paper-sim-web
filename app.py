@@ -51,6 +51,13 @@ html, body, [class*="css"] { font-variant-numeric: tabular-nums; }
 .kv { display: flex; justify-content: space-between; padding: 5px 2px;
       border-bottom: 1px solid #161b24; font-size: 13px; }
 .kv .k { color: #7a7f8c; } .kv .v { font-weight: 600; }
+table.pos { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 2px 0 8px; }
+table.pos th { text-align: right; color: #5f6572; font-weight: 400; padding: 4px 2px;
+               border-bottom: 1px solid #1e232e; white-space: nowrap; }
+table.pos th:first-child { text-align: left; }
+table.pos td { text-align: right; padding: 5px 2px; border-bottom: 1px solid #161b24;
+               white-space: nowrap; }
+table.pos td:first-child { text-align: left; color: #c9cdd6; font-weight: 600; }
 .hairline { border: none; border-top: 1px solid #161b24; margin: 14px 0; }
 .foot { font-size: 12px; color: #4a4f5c; margin-top: 26px; }
 .sig-row { display: flex; align-items: center; justify-content: space-between;
@@ -143,7 +150,7 @@ def _day_word(dt, now):
 
 
 def tape_html():
-    """顶部滚动行情条：只保留标的价格（全跟踪标的最新收盘 + BTC 实时）。"""
+    """顶部滚动行情条：只保留标的价格（全跟踪标的最新收盘 + 涨跌幅 + BTC 实时）。"""
     items = []
     live = btc_live()
     if live:
@@ -155,7 +162,14 @@ def tape_html():
         px = t.get("price")
         if px:
             fmt = ",.3f" if px < 1000 else ",.1f"
-            items.append(f'{t["symbol"]} <span class="num">{px:{fmt}}</span>')
+            chg = t.get("change_pct")
+            if chg is None:
+                tag = ""
+            else:
+                cls = "up" if chg > 0 else ("down" if chg < 0 else "flat")
+                arw = "▲" if chg > 0 else ("▼" if chg < 0 else "")
+                tag = f' <span class="{cls}">{arw}{chg:+.2f}%</span>'
+            items.append(f'{t["symbol"]} <span class="num">{px:{fmt}}</span>{tag}')
     if not items:
         return
     half = "".join(f'<span class="tape-item">{it}</span>' for it in items)
@@ -272,6 +286,9 @@ def nav_chart_svg(equity):
     for label, color, vals, start in aligned:
         pts_str = " ".join(f"{X(start + i):.1f},{Y(v):.1f}"
                            for i, v in enumerate(vals))
+        poly = (pts_str + f" {X(start + len(vals) - 1):.1f},{Y(lo):.1f}"
+                f" {X(start):.1f},{Y(lo):.1f}")
+        parts.append(f'<polygon points="{poly}" fill="{color}" opacity="0.08"/>')
         parts.append(f'<polyline points="{pts_str}" fill="none" '
                      f'stroke="{color}" stroke-width="2"/>')
         ex, ey = X(start + len(vals) - 1), Y(vals[-1])
@@ -295,6 +312,51 @@ def nav_chart_svg(equity):
                 unsafe_allow_html=True)
     st.markdown(svg, unsafe_allow_html=True)
     st.markdown(f'<div class="chart-legend">{legend}</div>', unsafe_allow_html=True)
+
+
+def kline_svg(kl, ma=20, w=340, h=132):
+    """迷你K线 + MA20：kl=[[mm-dd,o,h,l,c]...]；阳线红阴线绿（中国习惯）。"""
+    if not kl or len(kl) < 2:
+        return ""
+    closes = [r[4] for r in kl]
+    ma_vals = [sum(closes[i + 1 - ma:i + 1]) / ma if i + 1 >= ma else None
+               for i in range(len(kl))]
+    lo = min(r[3] for r in kl)
+    hi = max(r[2] for r in kl)
+    span = (hi - lo) or 1
+    n = len(kl)
+    cw = w / n
+    bw = max(1.5, cw * 0.62)
+
+    def Y(px):
+        return 8 + (1 - (px - lo) / span) * (h - 18)
+
+    parts = []
+    for i, r in enumerate(kl):
+        _, o, hh, ll, c = r
+        x = i * cw + cw / 2
+        col = "#f6465d" if c >= o else "#2ebd85"
+        parts.append(
+            f'<line x1="{x:.1f}" y1="{Y(hh):.1f}" x2="{x:.1f}" y2="{Y(ll):.1f}" '
+            f'stroke="{col}" stroke-width="1"/>')
+        top, bot = min(Y(o), Y(c)), max(Y(o), Y(c))
+        if bot - top < 1:
+            bot = top + 1
+        parts.append(
+            f'<rect x="{x - bw / 2:.1f}" y="{top:.1f}" width="{bw:.1f}" '
+            f'height="{bot - top:.1f}" fill="{col}"/>')
+    pts = " ".join(f"{i * cw + cw / 2:.1f},{Y(v):.1f}"
+                   for i, v in enumerate(ma_vals) if v is not None)
+    if pts:
+        parts.append(f'<polyline points="{pts}" fill="none" '
+                     'stroke="#f0b90b" stroke-width="1.2"/>')
+    yl = Y(closes[-1])
+    parts.append(f'<line x1="0" y1="{yl:.1f}" x2="{w}" y2="{yl:.1f}" '
+                 'stroke="#8a94a6" stroke-width="0.8" stroke-dasharray="3,3"/>')
+    parts.append(f'<text x="{w - 2:.1f}" y="{yl - 4:.1f}" font-size="10" '
+                 f'fill="#8a94a6" text-anchor="end">{closes[-1]:,.4g}</text>')
+    return (f'<svg viewBox="0 0 {w} {h}" style="width:100%;height:auto;display:block">'
+            f'{"".join(parts)}</svg>')
 
 
 # ---------- 通用组件 ----------
@@ -414,7 +476,7 @@ def account_card(aid, label, not_started_text=None):
     for k, v in rows:
         st.markdown(f'<div class="kv"><span class="k">{k}</span>'
                     f'<span class="v">{v}</span></div>', unsafe_allow_html=True)
-    # 持仓
+    # 持仓（终端式表格：成本 / 现价 / 浮盈亏 / 盈亏比）
     poss = [p for p in snap.get("positions", []) if p.get("account") == aid]
     st.markdown('<div class="sec" style="font-size:14px">持仓</div>', unsafe_allow_html=True)
     if not poss:
@@ -422,11 +484,38 @@ def account_card(aid, label, not_started_text=None):
                     '<span>暂无持仓，有信号会在顶部出现</span></div>',
                     unsafe_allow_html=True)
     else:
+        rows = []
         for p in poss:
-            st.markdown(
-                f'<div class="kv"><span class="k num">{p["symbol"]} × {p["qty"]:g}</span>'
-                f'<span class="v num">{f2(p.get("market_value"))}</span></div>',
-                unsafe_allow_html=True)
+            qty = p.get("qty") or 0
+            cost = p.get("avg_cost") or 0
+            last = p.get("last_price") or 0
+            if not last and qty:
+                last = (p.get("market_value") or 0) / qty
+            pnl = (last - cost) * qty if cost else 0
+            ret = (last / cost - 1) * 100 if cost else None
+            cls = "up" if pnl > 0 else ("down" if pnl < 0 else "flat")
+            rows.append(
+                f'<tr><td>{p["symbol"]}</td>'
+                f'<td class="num">{qty:g}</td>'
+                f'<td class="num">{cost:,.4g}</td>'
+                f'<td class="num">{last:,.4g}</td>'
+                f'<td class="num {cls}">{pnl:+,.2f}</td>'
+                f'<td class="num {cls}">'
+                f'{f"{ret:+.2f}%" if ret is not None else "—"}</td></tr>')
+        st.markdown(
+            '<table class="pos"><thead><tr><th>标的</th><th>数量</th><th>成本</th>'
+            '<th>现价</th><th>浮盈亏</th><th>盈亏比</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>', unsafe_allow_html=True)
+        # 迷你K线 + MA20（近60日收盘K，仅展示不进策略）
+        klines = snap.get("klines", {}) or {}
+        for p in poss:
+            kl = klines.get(p["symbol"])
+            if kl:
+                st.markdown(
+                    f'<div class="chart-label" style="margin:10px 0 4px">'
+                    f'{p["symbol"]} · 近{len(kl)}日K + MA20</div>',
+                    unsafe_allow_html=True)
+                st.markdown(kline_svg(kl), unsafe_allow_html=True)
     # 信号与成交（折叠，保持精简）
     sigs = [s for s in snap.get("signals", []) if s.get("account") == aid][:20]
     fills = [f for f in snap.get("fills", []) if f.get("account") == aid][:20]
