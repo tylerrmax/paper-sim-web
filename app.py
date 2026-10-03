@@ -504,29 +504,31 @@ with col_chart:
 with col_panel:
     pending_panel(pend)
 
-col_stock, col_crypto = st.columns(2)
+# 股票汇总（一行）：港股按当日 HKDCNY 折算，明细按原生币种独立记账
+pool = snap.get("stock_pool", {}) or {}
+st.markdown(
+    f'<div class="hero-note">股票总资产（CNY）'
+    f'<span class="num">{f2(pool.get("total_cny"))}</span>'
+    f' · 港股按当日 HKDCNY {pool.get("hkdcny") or "—"} 折算</div>',
+    unsafe_allow_html=True)
+
+col_a, col_hk, col_c = st.columns(3)
 
 
-# ---------- 股票 ----------
-with col_stock:
-    pool = snap.get("stock_pool", {}) or {}
-    total = pool.get("total_cny")
-    st.markdown('<div class="hero-label">总资产 · CNY</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="hero-num num">{f2(total)}</div>', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="hero-note">港股按当日 HKDCNY {pool.get("hkdcny") or "—"} 折算；'
-        '明细仍按原生币种独立记账</div>', unsafe_allow_html=True)
-    st.markdown('<hr class="hairline"/>', unsafe_allow_html=True)
-
+# ---------- A股 ----------
+with col_a:
     a_not_started = (asof < VAL_START_A and
                      not [f for f in snap.get("fills", []) if f.get("account") == "sim_a"])
     account_card("sim_a", "A股",
                  not_started_text="验证期 10-08 开始，届时信号会出现在这里"
                  if a_not_started else None)
+
+# ---------- 港股 ----------
+with col_hk:
     account_card("sim_hk", "港股")
 
 # ---------- 加密货币 ----------
-with col_crypto:
+with col_c:
     a = accts.get("sim_crypto", {})
     st.markdown('<div class="hero-label">总资产 · USDT</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="hero-num num">{f2(a.get("nav"))}</div>', unsafe_allow_html=True)
