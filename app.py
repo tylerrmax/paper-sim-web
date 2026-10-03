@@ -20,7 +20,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 SNAP = os.path.join(BASE, "snapshot.json")
 VAL_START_A = "2026-10-08"
 
-st.set_page_config(page_title="模拟盘", page_icon="📈", layout="centered")
+st.set_page_config(page_title="模拟盘", page_icon="📈", layout="wide")
 
 CSS = """
 <style>
@@ -54,6 +54,12 @@ html, body, [class*="css"] { font-variant-numeric: tabular-nums; }
 .foot { font-size: 12px; color: #bbb; margin-top: 26px; }
 .sig-row { display: flex; align-items: center; justify-content: space-between;
            padding: 8px 2px; border-bottom: 1px solid #f7f7f7; font-size: 14px; }
+.chart-label { font-size: 13px; color: #888; margin: 20px 0 6px; }
+.chart-legend { font-size: 12px; color: #888; margin-top: 6px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+@media (max-width: 768px) {
+  div[data-testid="column"] { min-width: 100% !important; }
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
