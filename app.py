@@ -156,6 +156,10 @@ def check_auth():
             st.rerun()
         else:
             st.error("密码错误")
+    hint = st.secrets.get("PASSWORD_HINT", "")
+    if hint:
+        with st.expander("💡 忘记密码？查看提示"):
+            st.caption(hint)
     st.stop()
 
 
