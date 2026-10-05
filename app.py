@@ -118,18 +118,9 @@ def _remember_token():
                     hashlib.sha256).hexdigest()
 
 
-def _cookie_mgr():
-    # 写 cookie 的唯一途径（读改走原生 st.context.cookies，不再依赖组件回传）
-    try:
-        from extra_streamlit_components import CookieManager
-        return CookieManager()
-    except Exception as e:
-        print(f"[auth] CookieManager 不可用: {e}", flush=True)
-        return None
-
-
 def _read_remember_cookie():
-    # 首选原生：服务端直接读 HTTP Cookie 头，首刷即正确，无 JS round-trip
+    # 只走原生：服务端直接读 HTTP Cookie 头，首刷即正确，无 JS round-trip。
+    # 不用组件读（同一 run 内多次 get_all 会触发 key 重复，且组件读在云上不可靠）。
     try:
         cc = st.context.cookies
         if cc:
@@ -138,14 +129,23 @@ def _read_remember_cookie():
                 return v
     except Exception:
         pass
-    # 回退：组件读
-    mgr = _cookie_mgr()
-    if mgr is not None:
-        try:
-            return (mgr.get_all() or {}).get(REMEMBER_COOKIE)
-        except Exception:
-            pass
     return None
+
+
+def _write_remember_cookie():
+    # 写 cookie 必须在"不紧跟 st.rerun()" 的 run 里执行：
+    # set() 后立即 rerun 会提前销毁组件 iframe，cookie 写不进去（已本地实测）。
+    # 因此登录成功时只置 flag，本函数在紧接着的终端 run 里执行写操作。
+    try:
+        from extra_streamlit_components import CookieManager
+        mgr = CookieManager()
+        mgr.get_all()
+        # 用 max_age（秒）而不用 expires_at 字符串：
+        # 旧代码传裸 ISO 日期，Safari 解析失败会把 cookie 降级成会话 cookie，关掉即删。
+        mgr.set(REMEMBER_COOKIE, _remember_token(),
+                max_age=REMEMBER_DAYS * 24 * 3600)
+    except Exception as e:
+        print(f"[auth] 写记住我 cookie 失败: {e}", flush=True)
 
 
 def check_auth():
@@ -166,16 +166,8 @@ def check_auth():
     if st.button("进入", type="primary"):
         if pw == pw_cfg:
             st.session_state["authed"] = True
-            mgr = _cookie_mgr()
-            if mgr is not None:
-                try:
-                    # 先 get_all 初始化组件再 set；用 max_age（秒）代替 expires_at
-                    # 字符串，避免 Safari 解析裸 ISO 日期失败、把 cookie 降级成会话 cookie
-                    mgr.get_all()
-                    mgr.set(REMEMBER_COOKIE, _remember_token(),
-                            max_age=REMEMBER_DAYS * 24 * 3600)
-                except Exception as e:
-                    print(f"[auth] 写记住我 cookie 失败: {e}", flush=True)
+            # cookie 写操作放到下一个 run 做（见 _write_remember_cookie 注释）
+            st.session_state["_write_remember_cookie"] = True
             st.rerun()
         else:
             st.error("密码错误")
@@ -187,6 +179,10 @@ def check_auth():
 
 
 check_auth()
+
+# 登录成功后的第一个终端 run：在此写 30 天记住我 cookie（本 run 正常结束，不 rerun）
+if st.session_state.pop("_write_remember_cookie", False):
+    _write_remember_cookie()
 
 
 # ---------- 数据 ----------
