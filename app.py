@@ -119,11 +119,33 @@ def _remember_token():
 
 
 def _cookie_mgr():
+    # 写 cookie 的唯一途径（读改走原生 st.context.cookies，不再依赖组件回传）
     try:
         from extra_streamlit_components import CookieManager
         return CookieManager()
-    except Exception:
+    except Exception as e:
+        print(f"[auth] CookieManager 不可用: {e}", flush=True)
         return None
+
+
+def _read_remember_cookie():
+    # 首选原生：服务端直接读 HTTP Cookie 头，首刷即正确，无 JS round-trip
+    try:
+        cc = st.context.cookies
+        if cc:
+            v = cc.get(REMEMBER_COOKIE)
+            if v:
+                return v
+    except Exception:
+        pass
+    # 回退：组件读
+    mgr = _cookie_mgr()
+    if mgr is not None:
+        try:
+            return (mgr.get_all() or {}).get(REMEMBER_COOKIE)
+        except Exception:
+            pass
+    return None
 
 
 def check_auth():
@@ -134,27 +156,26 @@ def check_auth():
     if st.session_state.get("authed"):
         return
     # 记住我：本机 cookie 命中则免登（换密码后旧 cookie 自动失效）
-    mgr = _cookie_mgr()
-    if mgr is not None:
-        try:
-            cookies = mgr.get_all() or {}
-        except Exception:
-            cookies = {}
-        tok = _remember_token()
-        if tok and hmac.compare_digest(cookies.get(REMEMBER_COOKIE) or "", tok):
-            st.session_state["authed"] = True
-            return
+    tok = _remember_token()
+    saved = _read_remember_cookie()
+    if tok and saved and hmac.compare_digest(saved, tok):
+        st.session_state["authed"] = True
+        return
     st.markdown("### 验证终端")
     pw = st.text_input("访问密码", type="password")
     if st.button("进入", type="primary"):
         if pw == pw_cfg:
             st.session_state["authed"] = True
+            mgr = _cookie_mgr()
             if mgr is not None:
                 try:
+                    # 先 get_all 初始化组件再 set；用 max_age（秒）代替 expires_at
+                    # 字符串，避免 Safari 解析裸 ISO 日期失败、把 cookie 降级成会话 cookie
+                    mgr.get_all()
                     mgr.set(REMEMBER_COOKIE, _remember_token(),
-                            expires_at=datetime.now() + timedelta(days=REMEMBER_DAYS))
-                except Exception:
-                    pass
+                            max_age=REMEMBER_DAYS * 24 * 3600)
+                except Exception as e:
+                    print(f"[auth] 写记住我 cookie 失败: {e}", flush=True)
             st.rerun()
         else:
             st.error("密码错误")
