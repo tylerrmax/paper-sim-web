@@ -156,6 +156,18 @@ footer { visibility: hidden; }
 .stpill.ok { background: rgba(46,189,133,.12); color: #2ebd85; }
 .stpill.warn { background: rgba(240,185,11,.12); color: #f0b90b; }
 .stpill.bad { background: rgba(246,70,93,.12); color: #f6465d; }
+/* ---- Pill 导航（query params + 自定义 HTML）：桌面横排，手机横滚 ---- */
+.pnav-row { display: flex; gap: 8px; overflow-x: auto; padding: 6px 2px;
+  margin: 10px 0 4px; scrollbar-width: none; }
+.pnav-row::-webkit-scrollbar { display: none; }
+.pnav { flex: 1 0 auto; text-align: center; padding: 11px 20px; border-radius: 10px;
+  background: #14181f; border: 1px solid #1a1f2a; color: #8b93a5;
+  text-decoration: none !important; font-size: 15px; white-space: nowrap; }
+.pnav.on { background: #232a36; border-color: #3a4453; color: #e8ecf1; font-weight: 600; }
+.pnav:hover { color: #e8ecf1; border-color: #2c3542; }
+@media (max-width: 768px) {
+  .pnav { padding: 10px 16px; font-size: 14px; }
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -500,17 +512,7 @@ def mkt_northbound():
 
 def market_tabs():
     """市场盘面四 tab：行情 / 资金净流入 / 北向资金 / 涨跌分布。"""
-    if "mkt_tab" not in st.session_state:
-        st.session_state.mkt_tab = "行情"
-    cols = st.columns(4)
-    for col, name in zip(cols, ("行情", "资金净流入", "北向资金", "涨跌分布")):
-        with col:
-            active = st.session_state.mkt_tab == name
-            if st.button(name, key=f"mkt_tab_{name}", use_container_width=True,
-                         type="primary" if active else "secondary"):
-                st.session_state.mkt_tab = name
-                st.rerun()
-    tab = st.session_state.mkt_tab
+    tab = pill_nav(("行情", "资金净流入", "北向资金", "涨跌分布"), "mtab", "行情")
     if tab == "资金净流入":
         mkt_flow()
     elif tab == "北向资金":
@@ -806,20 +808,10 @@ def validation_dashboard():
     wlr_t = tg.get("win_loss_ratio") or 3.0
     mdd_t = tg.get("max_drawdown") or 0.10
     smin, smax = tg.get("sample_min", 20), tg.get("sample_max", 30)
-    labels = (("sim_a", "A股"), ("sim_hk", "港股"), ("sim_crypto", "加密"))
 
     st.markdown('<div class="sec">验证中心</div>', unsafe_allow_html=True)
-    if "verify_acct" not in st.session_state:
-        st.session_state.verify_acct = "sim_hk"
-    vc1, vc2, vc3 = st.columns(3)
-    for _vc, (_aid, _alabel) in zip((vc1, vc2, vc3), labels):
-        with _vc:
-            _act = st.session_state.verify_acct == _aid
-            if st.button(_alabel, key=f"verify_{_aid}", use_container_width=True,
-                         type="primary" if _act else "secondary"):
-                st.session_state.verify_acct = _aid
-                st.rerun()
-    aid = st.session_state.verify_acct
+    _vlabel = pill_nav(("A股", "港股", "加密"), "vacct", "港股")
+    aid = {"A股": "sim_a", "港股": "sim_hk", "加密": "sim_crypto"}[_vlabel]
     a = accts_g.get(aid) or {}
     n = a.get("round_trips") or 0
     exp = a.get("expectancy")
@@ -1133,6 +1125,22 @@ def account_card(aid, label, not_started_text=None):
 
 
 
+def pill_nav(options, key, default):
+    """Pill 导航：query params + 自定义 HTML。桌面端横排，移动端横向滚动；
+    不依赖 Streamlit 按钮内部 DOM，手机/桌面样式一致。返回当前选中。"""
+    cur = st.query_params.get(key, default)
+    if cur not in options:
+        cur = default
+    base = "&".join(f"{k}={v}" for k, v in st.query_params.items() if k != key)
+    pills = []
+    for opt in options:
+        cls = " on" if opt == cur else ""
+        qs = f"{key}={opt}" + (f"&{base}" if base else "")
+        pills.append(f'<a class="pnav{cls}" href="?{qs}" target="_self">{opt}</a>')
+    st.markdown(f'<div class="pnav-row">{"".join(pills)}</div>', unsafe_allow_html=True)
+    return cur
+
+
 # ============================================================
 # 页眉 + 顶层导航（5 个一级入口：总览 / 交易 / 验证 / 风控 / 系统）
 # ============================================================
@@ -1166,17 +1174,8 @@ st.markdown(
     f'<span>数据 {age_txt}更新 · {"自动" if mod == "auto" else "手动"}模式</span></div>',
     unsafe_allow_html=True)
 
-# 顶层导航
-if "nav" not in st.session_state:
-    st.session_state.nav = "总览"
-_nav_cols = st.columns(5)
-for _nc, _nn in zip(_nav_cols, ("总览", "交易", "验证", "风控", "系统")):
-    with _nc:
-        _active = st.session_state.nav == _nn
-        if st.button(_nn, key=f"nav_{_nn}", use_container_width=True,
-                     type="primary" if _active else "secondary"):
-            st.session_state.nav = _nn
-            st.rerun()
+# 顶层导航（pill，手机横滚）
+nav = pill_nav(("总览", "交易", "验证", "风控", "系统"), "nav", "总览")
 
 # 聚合指标（总览用）：股票 CNY / 加密 USDT 分开展示，不硬折算
 _pool = snap.get("stock_pool", {}) or {}
@@ -1413,4 +1412,4 @@ def page_system():
 
 # 路由
 {"总览": page_overview, "交易": page_trade, "验证": page_verify,
- "风控": page_risk, "系统": page_system}[st.session_state.nav]()
+ "风控": page_risk, "系统": page_system}[nav]()
