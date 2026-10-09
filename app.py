@@ -184,6 +184,13 @@ check_auth()
 if st.session_state.pop("_write_remember_cookie", False):
     _write_remember_cookie()
 
+# 页面自动刷新：快照由服务端每 ~2 分钟推送，无需手动刷新页面
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=120_000, key="vterm_autorefresh")
+except Exception:
+    pass
+
 
 # ---------- 数据 ----------
 @st.cache_data(ttl=60)
@@ -547,11 +554,11 @@ def pending_panel(items):
                     '<span>有信号会在这里出现，等你批准</span></div>',
                     unsafe_allow_html=True)
         return
+    link_txt = ('<span class="livedot"></span>指令链路正常' if github_link_ok()
+                else '<span style="color:#f6465d">●</span> 指令链路异常，提交会失败')
     st.markdown(f'<div class="sec">待审批 <span class="badge">{len(items)}</span>'
                 f'<span style="font-weight:400;font-size:12px;color:#5f6572;margin-left:10px">'
-                f'{"<span class=\"livedot\"></span>指令链路正常" if github_link_ok() else '
-                f'"<span style=\"color:#f6465d\">●</span> 指令链路异常，提交会失败"}'
-                f'</span></div>',
+                f'{link_txt}</span></div>',
                 unsafe_allow_html=True)
     # 已提交追踪：点过批准/跳过后，即使快照还没更新，也明确显示"已提交"，
     # 不再让用户对着一条已提交的信号反复点。快照更新（信号消失）后自动清理。
@@ -756,10 +763,17 @@ with p2:
                 unsafe_allow_html=True)
 if b1.button("⏸ 暂停" if stt == "running" else "▶ 开始", width="stretch"):
     if queue_command("set_status", {"status": "paused" if stt == "running" else "running"}):
+        st.session_state["_ctrl_msg_ts"] = datetime.now().timestamp()
         st.rerun()
 if b2.button("切手动" if mod == "auto" else "切自动", width="stretch"):
     if queue_command("set_mode", {"mode": "manual" if mod == "auto" else "auto"}):
+        st.session_state["_ctrl_msg_ts"] = datetime.now().timestamp()
         st.rerun()
+# 快照更新前，用这条持久提示代替一闪而过的 toast（显示 3 分钟，覆盖约2分钟生效窗口）
+if datetime.now().timestamp() - st.session_state.get("_ctrl_msg_ts", 0) < 180:
+    st.markdown('<div class="strip"><span style="color:#2ebd85">'
+                '✓ 指令已提交，约2分钟内生效（页面会自动刷新）</span></div>',
+                unsafe_allow_html=True)
 
 # ---------- 元信息 + 下一步：并入同一排 ----------
 _ups = []
