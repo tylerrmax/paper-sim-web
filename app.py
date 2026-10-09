@@ -134,6 +134,28 @@ footer { visibility: hidden; }
   border-left: 3px solid #f0b90b; border-radius: 0 8px 8px 0;
   margin-bottom: 8px; font-size: 14px; color: #d8dce3; }
 .sec { margin-top: 26px !important; }
+/* ---- 验证 KPI 卡片（参考 tradesgnl） ---- */
+.kpi { background: #10141b; border: 1px solid #1a1f2a; border-radius: 10px;
+  padding: 16px 18px; margin-bottom: 12px; }
+.kpi-head { display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px; }
+.kpi-label { font-size: 13px; color: #8b93a5; }
+.kpi-value { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 26px; font-weight: 800; color: #e8ecf1; line-height: 1.25; }
+.kpi-unit { font-size: 14px; color: #8b93a5; font-weight: 400; }
+.kpi-sub { font-size: 12px; color: #5f6572; margin-top: 6px; }
+.sdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.sdot.ok { background: #2ebd85; box-shadow: 0 0 6px rgba(46,189,133,.6); }
+.sdot.bad { background: #f6465d; box-shadow: 0 0 6px rgba(246,70,93,.6); }
+.sdot.wait { background: #5f6572; }
+/* ---- 风控/系统状态卡片（参考 CYG） ---- */
+.stcard { background: #10141b; border: 1px solid #1a1f2a; border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 12px; }
+.stcard .kpi-value { font-size: 20px; }
+.stpill { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; }
+.stpill.ok { background: rgba(46,189,133,.12); color: #2ebd85; }
+.stpill.warn { background: rgba(240,185,11,.12); color: #f0b90b; }
+.stpill.bad { background: rgba(246,70,93,.12); color: #f6465d; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -681,8 +703,32 @@ def kline_svg(kl, ma=20, w=340, h=132):
             f'{"".join(parts)}</svg>')
 
 
+def _win_rate(aid, val_start):
+    """验证期内卖出即算一笔完整 round-trip（与管线口径一致）。返回 (win_rate, wins, total)。"""
+    fills = [f for f in snap.get("fills", [])
+             if f.get("account") == aid and f.get("side") == "SELL"
+             and (f.get("date") or "") >= (val_start or "")]
+    total = len(fills)
+    wins = sum(1 for f in fills if (f.get("pnl") or 0) > 0)
+    return (wins / total if total else None), wins, total
+
+
+def _kpi_card(label, value_html, sub_html="", status=None):
+    """验证 KPI 卡片（参考 tradesgnl）：大数字 + 小字说明 + 达标状态点。"""
+    dot = ""
+    if status == "ok":
+        dot = '<span class="sdot ok"></span>'
+    elif status == "bad":
+        dot = '<span class="sdot bad"></span>'
+    elif status == "wait":
+        dot = '<span class="sdot wait"></span>'
+    return (f'<div class="kpi"><div class="kpi-head"><span class="kpi-label">{label}</span>{dot}</div>'
+            f'<div class="kpi-value">{value_html}</div>'
+            f'<div class="kpi-sub">{sub_html}</div></div>')
+
+
 def validation_dashboard():
-    """验证仪表盘：毕业标准记分牌（数据来自管线 graduation，本页只展示）。"""
+    """验证中心：KPI 卡片 + 账户切换，一眼判断是否达到验收标准。"""
     g = snap.get("graduation", {}) or {}
     tg = g.get("targets", {}) or {}
     accts_g = g.get("accounts", {}) or {}
@@ -690,62 +736,78 @@ def validation_dashboard():
     mdd_t = tg.get("max_drawdown") or 0.10
     smin, smax = tg.get("sample_min", 20), tg.get("sample_max", 30)
     labels = (("sim_a", "A股"), ("sim_hk", "港股"), ("sim_crypto", "加密"))
-    st.markdown('<div class="sec">验证仪表盘</div>', unsafe_allow_html=True)
 
-    rows = []
-    # 样本进度
-    tds = []
-    for aid, _ in labels:
-        n = (accts_g.get(aid) or {}).get("round_trips") or 0
-        cls = "up" if n >= smin else ("flat" if n == 0 else "")
-        tds.append(f'<td class="num {cls}">{n} / {smin}–{smax}笔</td>')
-    rows.append(f'<tr><td>样本进度</td>{"".join(tds)}'
-                f'<td class="num flat">{smin}–{smax}笔</td></tr>')
-    # 期望值/笔（>0）
-    tds = []
-    for aid, _ in labels:
-        v = (accts_g.get(aid) or {}).get("expectancy")
-        if v is None:
-            tds.append('<td class="num flat">—</td>')
-        else:
-            cls = "up" if v > 0 else ("down" if v < 0 else "flat")
-            tds.append(f'<td class="num {cls}">{v:+,.2f}</td>')
-    rows.append(f'<tr><td>期望值/笔</td>{"".join(tds)}'
-                '<td class="num flat">&gt; 0</td></tr>')
-    # 盈亏比（硬线）
-    tds = []
-    for aid, _ in labels:
-        v = (accts_g.get(aid) or {}).get("win_loss_ratio")
-        if v is None:
-            tds.append('<td class="num flat">—</td>')
-        else:
-            tds.append(f'<td class="num {"up" if v >= wlr_t else "down"}">{v:,.2f}</td>')
-    rows.append(f'<tr><td>盈亏比</td>{"".join(tds)}'
-                f'<td class="num flat">≥ {wlr_t:g}（硬线）</td></tr>')
-    # 盈利因子（参考）
-    tds = []
-    for aid, _ in labels:
-        v = (accts_g.get(aid) or {}).get("profit_factor")
-        tds.append(f'<td class="num">{"—" if v is None else f"{v:,.2f}"}</td>')
-    rows.append(f'<tr><td>盈利因子</td>{"".join(tds)}'
-                '<td class="num flat">参考</td></tr>')
-    # 最大回撤
-    tds = []
-    for aid, _ in labels:
-        v = (accts_g.get(aid) or {}).get("max_drawdown")
-        if v is None:
-            tds.append('<td class="num flat">—</td>')
-        else:
-            tds.append(f'<td class="num {"up" if v <= mdd_t else "down"}">'
-                       f'{v * 100:.1f}%</td>')
-    rows.append(f'<tr><td>最大回撤</td>{"".join(tds)}'
-                f'<td class="num flat">≤ {mdd_t * 100:.0f}%</td></tr>')
+    st.markdown('<div class="sec">验证中心</div>', unsafe_allow_html=True)
+    if "verify_acct" not in st.session_state:
+        st.session_state.verify_acct = "sim_hk"
+    vc1, vc2, vc3 = st.columns(3)
+    for _vc, (_aid, _alabel) in zip((vc1, vc2, vc3), labels):
+        with _vc:
+            _act = st.session_state.verify_acct == _aid
+            if st.button(_alabel, key=f"verify_{_aid}", use_container_width=True,
+                         type="primary" if _act else "secondary"):
+                st.session_state.verify_acct = _aid
+                st.rerun()
+    aid = st.session_state.verify_acct
+    a = accts_g.get(aid) or {}
+    n = a.get("round_trips") or 0
+    exp = a.get("expectancy")
+    wlr = a.get("win_loss_ratio")
+    pf = a.get("profit_factor")
+    mdd = a.get("max_drawdown")
+    wr, wins, total = _win_rate(aid, a.get("val_start"))
 
-    st.markdown(
-        '<table class="pos"><thead><tr><th>指标</th><th>A股</th><th>港股</th>'
-        '<th>加密</th><th>目标</th></tr></thead>'
-        f'<tbody>{"".join(rows)}</tbody></table>', unsafe_allow_html=True)
-    st.caption(g.get("execution_note", ""))
+    # 样本是否足够决定状态：样本不足 → wait；达标 → ok；不达标 → bad
+    def _st(ok):
+        if n < smin:
+            return "wait"
+        return "ok" if ok else "bad"
+
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        st.markdown(_kpi_card(
+            "样本进度",
+            f'<span class="num">{n}</span>'
+            f'<span class="kpi-unit"> / {smin}–{smax}笔</span>',
+            f"验证期自 {a.get('val_start', '—')} 起",
+            _st(True)), unsafe_allow_html=True)
+    with k2:
+        st.markdown(_kpi_card(
+            "期望值 / 笔",
+            '<span class="num flat">—</span>' if exp is None
+            else f'<span class="num {"up" if exp > 0 else "down"}">{exp:+,.2f}</span>',
+            "目标 &gt; 0",
+            _st(exp is not None and exp > 0)), unsafe_allow_html=True)
+    with k3:
+        st.markdown(_kpi_card(
+            "胜率",
+            '<span class="num flat">—</span>' if wr is None
+            else f'<span class="num">{wr * 100:.1f}%</span>',
+            f"{wins} / {total} 笔" if total else "仅记录",
+            "wait" if wr is None else None), unsafe_allow_html=True)
+    k4, k5, k6 = st.columns(3)
+    with k4:
+        st.markdown(_kpi_card(
+            "盈亏比",
+            '<span class="num flat">—</span>' if wlr is None
+            else f'<span class="num {"up" if wlr >= wlr_t else "down"}">{wlr:,.2f}</span>',
+            f"目标 ≥ {wlr_t:g}（硬线）",
+            _st(wlr is not None and wlr >= wlr_t)), unsafe_allow_html=True)
+    with k5:
+        st.markdown(_kpi_card(
+            "盈利因子",
+            '<span class="num flat">—</span>' if pf is None
+            else f'<span class="num">{pf:,.2f}</span>',
+            "仅参考",
+            "wait" if pf is None else None), unsafe_allow_html=True)
+    with k6:
+        st.markdown(_kpi_card(
+            "最大回撤",
+            '<span class="num flat">—</span>' if mdd is None
+            else f'<span class="num {"up" if mdd <= mdd_t else "down"}">{mdd * 100:.2f}%</span>',
+            f"目标 ≤ {mdd_t * 100:.0f}%",
+            _st(mdd is not None and mdd <= mdd_t)), unsafe_allow_html=True)
+    st.caption("● 达标　● 未达标　● 样本不足　" + (g.get("execution_note") or ""))
 
 
 # ---------- 通用组件 ----------
@@ -1193,25 +1255,47 @@ def page_risk():
                     '✓ 指令已提交，约2分钟内生效（页面会自动刷新）</span></div>',
                     unsafe_allow_html=True)
 
-    st.markdown('<div class="sec">异常记录</div>', unsafe_allow_html=True)
-    _issues = []
-    if age > timedelta(minutes=30):
-        _issues.append(("快照同步", f"已 {age_txt}未更新", "bad"))
-    else:
-        _issues.append(("快照同步", f"{age_txt}更新", "ok"))
-    # 数据新鲜度：各市场最新行情日期
+    st.markdown('<div class="sec">系统状态</div>', unsafe_allow_html=True)
     _klines = snap.get("klines", {}) or {}
+    # 状态卡片：快照同步 / 行情源 / GitHub链路
+    _cards = []
+    if age > timedelta(minutes=30):
+        _cards.append(("快照同步", f"{age_txt}未更新", "同步可能中断", "bad"))
+    else:
+        _cards.append(("快照同步", f"{age_txt}更新", "每2分钟同步", "ok"))
+    _ok_n = sum(1 for _s in ("002446", "688305", "HK9660", "HK0354", "BTCUSDT")
+                if (_klines.get(_s) or []))
+    _cards.append(("行情源", f"{_ok_n}/5", "标的有行情数据",
+                   "ok" if _ok_n == 5 else ("warn" if _ok_n >= 3 else "bad")))
+    _cards.append(("GitHub 链路", "正常" if github_link_ok() else "异常",
+                   "指令下发通道", "ok" if github_link_ok() else "bad"))
+    _cards.append(("交易引擎", "运行中" if stt == "running" else "已暂停",
+                   f"{'自动' if mod == 'auto' else '手动'}模式",
+                   "ok" if stt == "running" else "warn"))
+    rc1, rc2, rc3, rc4 = st.columns(4)
+    for _rc, (_label, _val, _sub, _st) in zip((rc1, rc2, rc3, rc4), _cards):
+        with _rc:
+            st.markdown(
+                f'<div class="stcard"><div class="kpi-head">'
+                f'<span class="kpi-label">{_label}</span>'
+                f'<span class="stpill {_st}">'
+                f'{"正常" if _st == "ok" else ("注意" if _st == "warn" else "异常")}</span></div>'
+                f'<div class="kpi-value">{_val}</div>'
+                f'<div class="kpi-sub">{_sub}</div></div>',
+                unsafe_allow_html=True)
+    # 各标的行情形细
+    st.markdown('<div class="sec" style="font-size:14px">行情明细</div>',
+                unsafe_allow_html=True)
     for _sym in ("002446", "688305", "HK9660", "HK0354", "BTCUSDT"):
         _kl = _klines.get(_sym) or []
         if _kl:
-            _issues.append((f"行情 {_sym}", f"截至 {_kl[-1][0]}", "ok"))
+            st.markdown(f'<div class="kv"><span class="k">{_sym}</span>'
+                        f'<span class="v up">截至 {_kl[-1][0]}</span></div>',
+                        unsafe_allow_html=True)
         else:
-            _issues.append((f"行情 {_sym}", "无数据", "bad"))
-    for _label, _val, _st in _issues:
-        _cls = "up" if _st == "ok" else "down"
-        st.markdown(f'<div class="kv"><span class="k">{_label}</span>'
-                    f'<span class="v {_cls}">{_val}</span></div>',
-                    unsafe_allow_html=True)
+            st.markdown(f'<div class="kv"><span class="k">{_sym}</span>'
+                        f'<span class="v down">无数据</span></div>',
+                        unsafe_allow_html=True)
 
 
 # ============================================================
