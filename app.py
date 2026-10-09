@@ -809,6 +809,7 @@ def validation_dashboard():
     wlr = a.get("win_loss_ratio")
     pf = a.get("profit_factor")
     mdd = a.get("max_drawdown")
+    vret = a.get("val_return")
     wr, wins, total = _win_rate(aid, a.get("val_start"))
 
     # 样本是否足够决定状态：样本不足 → wait；达标 → ok；不达标 → bad
@@ -820,41 +821,49 @@ def validation_dashboard():
     k1, k2, k3 = st.columns(3)
     with k1:
         st.markdown(_kpi_card(
+            "验证期收益",
+            '<span class="num flat">—</span>' if vret is None
+            else f'<span class="num {"up" if vret > 0 else ("down" if vret < 0 else "flat")}">'
+                 f'{vret * 100:+.2f}%</span>',
+            f"验证期 {a.get('val_start', '—')} 至今",
+            _st(vret is not None and vret > 0)), unsafe_allow_html=True)
+    with k2:
+        st.markdown(_kpi_card(
             "样本进度",
             f'<span class="num">{n}</span>'
             f'<span class="kpi-unit"> / {smin}–{smax}笔</span>',
             f"验证期自 {a.get('val_start', '—')} 起",
             _st(True)), unsafe_allow_html=True)
-    with k2:
+    with k3:
         st.markdown(_kpi_card(
             "期望值 / 笔",
             '<span class="num flat">—</span>' if exp is None
             else f'<span class="num {"up" if exp > 0 else "down"}">{exp:+,.2f}</span>',
             "目标 &gt; 0",
             _st(exp is not None and exp > 0)), unsafe_allow_html=True)
-    with k3:
+    k4, k5, k6, k7 = st.columns(4)
+    with k4:
         st.markdown(_kpi_card(
             "胜率",
             '<span class="num flat">—</span>' if wr is None
             else f'<span class="num">{wr * 100:.1f}%</span>',
             f"{wins} / {total} 笔" if total else "仅记录",
             "wait" if wr is None else None), unsafe_allow_html=True)
-    k4, k5, k6 = st.columns(3)
-    with k4:
+    with k5:
         st.markdown(_kpi_card(
             "盈亏比",
             '<span class="num flat">—</span>' if wlr is None
             else f'<span class="num {"up" if wlr >= wlr_t else "down"}">{wlr:,.2f}</span>',
             f"目标 ≥ {wlr_t:g}（硬线）",
             _st(wlr is not None and wlr >= wlr_t)), unsafe_allow_html=True)
-    with k5:
+    with k6:
         st.markdown(_kpi_card(
             "盈利因子",
             '<span class="num flat">—</span>' if pf is None
             else f'<span class="num">{pf:,.2f}</span>',
             "仅参考",
             "wait" if pf is None else None), unsafe_allow_html=True)
-    with k6:
+    with k7:
         st.markdown(_kpi_card(
             "最大回撤",
             '<span class="num flat">—</span>' if mdd is None
@@ -950,7 +959,8 @@ def event_stream():
         unsafe_allow_html=True)
 
     rows = []
-    for s in signals[:20]:
+    # 按日期倒序：最新的信号在最上面，避免旧记录看起来像"落后"
+    for s in sorted(signals, key=lambda x: x.get("date") or "", reverse=True)[:20]:
         k = _k(s)
         f = fill_map.get(k)
         dec = appr_map.get(k)
@@ -1153,20 +1163,67 @@ else:
 stt, mod = control.get("status"), control.get("mode")
 dot = '<span class="livedot"></span>' if stt == "running" else ""
 
-# 系统状态判定（优先级：数据异常 > 暂停中 > 等待人工确认 > 正常运行）
+def data_freshness():
+    """基于快照**内容**判定数据新鲜度（不依赖文件 mtime）。
+
+    返回 (state, detail)：
+    - ok: asof == 期望的最近数据日期，且各标的行情形后日期与 asof 一致
+    - stale: 可证明数据过期（asof 早于期望日期）
+    - unknown: 无法验证（缺 asof / 无行情数据），显示"未知"比"正常"更安全
+    """
+    asof = snap.get("asof")  # "2026-10-09"
+    klines = snap.get("klines", {}) or {}
+    if not asof or not klines:
+        return "unknown", "缺少 asof 或行情数据，无法验证"
+    # 期望的最近数据日期：最近一个交易日；工作日 17:12 跑批前用前一天
+    d = now.date()
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    if now.date().weekday() < 5 and now.hour < 17:
+        d -= timedelta(days=1)
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+    expected = d.strftime("%Y-%m-%d")
+    if asof < expected:
+        return "stale", f"数据截至 {asof}，期望 {expected}"
+    # 各标的行情形后日期：股票应 == asof；BTC 日K按UTC收盘，允许晚一天
+    bad = []
+    for s, kl in klines.items():
+        if not kl:
+            bad.append(f"{s}无数据")
+            continue
+        last = kl[-1][0]  # "MM-DD"
+        want = asof[5:]
+        if s.upper().endswith("USDT"):
+            # BTC：asof 当天的 K 线在北京时间次日 08:00 才收盘
+            if last not in (want, (d - timedelta(days=1)).strftime("%m-%d")):
+                bad.append(f"{s}截至{last}")
+        elif last != want:
+            bad.append(f"{s}截至{last}")
+    if bad:
+        return "stale", "；".join(bad)
+    return "ok", f"数据截至 {asof}"
+
+
+_fresh, _fresh_detail = data_freshness()
+
+# 系统状态判定（优先级：数据异常 > 暂停中 > 等待人工确认 > 未知 > 正常运行）
+# 注意：不可验证时显示"未知"而非"正常"
 _n_pend = len(pend)
-if age > timedelta(minutes=30):
+if _fresh == "stale":
     _sys_state, _sys_cls = "数据异常", "bad"
 elif stt == "paused":
     _sys_state, _sys_cls = "暂停中", "warn"
 elif _n_pend > 0 and mod == "manual":
     _sys_state, _sys_cls = f"等待人工确认（{_n_pend}）", "warn"
+elif _fresh == "unknown":
+    _sys_state, _sys_cls = "状态未知", "warn"
 else:
     _sys_state, _sys_cls = "正常运行", "ok"
 st.markdown(
     f'<div class="sysbanner {_sys_cls}">{dot if _sys_cls == "ok" else ""}'
     f'<b>{_sys_state}</b>'
-    f'<span>数据 {age_txt}更新 · {"自动" if mod == "auto" else "手动"}模式</span></div>',
+    f'<span>{_fresh_detail} · {"自动" if mod == "auto" else "手动"}模式</span></div>',
     unsafe_allow_html=True)
 
 # 顶层导航（pill，手机横滚）
@@ -1322,12 +1379,15 @@ def page_risk():
 
     st.markdown('<div class="sec">系统状态</div>', unsafe_allow_html=True)
     _klines = snap.get("klines", {}) or {}
-    # 状态卡片：快照同步 / 行情源 / GitHub链路
+    _asof = snap.get("asof") or ""
+    # 状态卡片：数据新鲜度（内容判定） / 行情源 / GitHub链路 / 交易引擎
     _cards = []
-    if age > timedelta(minutes=30):
-        _cards.append(("快照同步", f"{age_txt}未更新", "同步可能中断", "bad"))
+    if _fresh == "ok":
+        _cards.append(("数据新鲜度", _asof, _fresh_detail, "ok"))
+    elif _fresh == "stale":
+        _cards.append(("数据新鲜度", "过期", _fresh_detail, "bad"))
     else:
-        _cards.append(("快照同步", f"{age_txt}更新", "每2分钟同步", "ok"))
+        _cards.append(("数据新鲜度", "未知", _fresh_detail, "warn"))
     _ok_n = sum(1 for _s in ("002446", "688305", "HK9660", "HK0354", "BTCUSDT")
                 if (_klines.get(_s) or []))
     _cards.append(("行情源", f"{_ok_n}/5", "标的有行情数据",
@@ -1348,19 +1408,28 @@ def page_risk():
                 f'<div class="kpi-value">{_val}</div>'
                 f'<div class="kpi-sub">{_sub}</div></div>',
                 unsafe_allow_html=True)
-    # 各标的行情形细
+    # 各标的行情形细：与 asof 对齐为正常，落后标红（BTC 日K按UTC收盘，允许晚一天）
     st.markdown('<div class="sec" style="font-size:14px">行情明细</div>',
                 unsafe_allow_html=True)
+    _asof_d = None
+    try:
+        _asof_d = datetime.strptime(_asof, "%Y-%m-%d").date() if _asof else None
+    except ValueError:
+        pass
     for _sym in ("002446", "688305", "HK9660", "HK0354", "BTCUSDT"):
         _kl = _klines.get(_sym) or []
-        if _kl:
-            st.markdown(f'<div class="kv"><span class="k">{_sym}</span>'
-                        f'<span class="v up">截至 {_kl[-1][0]}</span></div>',
-                        unsafe_allow_html=True)
+        if not _kl:
+            _tag = '<span class="v down">无数据</span>'
         else:
-            st.markdown(f'<div class="kv"><span class="k">{_sym}</span>'
-                        f'<span class="v down">无数据</span></div>',
-                        unsafe_allow_html=True)
+            _last = _kl[-1][0]
+            _want = _asof[5:] if _asof else ""
+            _prev = (_asof_d - timedelta(days=1)).strftime("%m-%d") if _asof_d else ""
+            _is_btc = _sym.upper().endswith("USDT")
+            _ok = (_last == _want) or (_is_btc and _last == _prev)
+            _tag = (f'<span class="v {"up" if _ok else "down"}>截至 {_last}'
+                    f'{"（落后）" if not _ok else ""}</span>')
+        st.markdown(f'<div class="kv"><span class="k">{_sym}</span>{_tag}</div>',
+                    unsafe_allow_html=True)
 
 
 # ============================================================
