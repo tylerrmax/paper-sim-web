@@ -156,17 +156,14 @@ footer { visibility: hidden; }
 .stpill.ok { background: rgba(46,189,133,.12); color: #2ebd85; }
 .stpill.warn { background: rgba(240,185,11,.12); color: #f0b90b; }
 .stpill.bad { background: rgba(246,70,93,.12); color: #f6465d; }
-/* ---- Pill 导航（query params + 自定义 HTML）：桌面横排，手机横滚 ---- */
-.pnav-row { display: flex; gap: 8px; overflow-x: auto; padding: 6px 2px;
-  margin: 10px 0 4px; scrollbar-width: none; }
-.pnav-row::-webkit-scrollbar { display: none; }
-.pnav { flex: 1 0 auto; text-align: center; padding: 11px 20px; border-radius: 10px;
-  background: #14181f; border: 1px solid #1a1f2a; color: #8b93a5;
-  text-decoration: none !important; font-size: 15px; white-space: nowrap; }
-.pnav.on { background: #232a36; border-color: #3a4453; color: #e8ecf1; font-weight: 600; }
-.pnav:hover { color: #e8ecf1; border-color: #2c3542; }
+/* ---- segmented_control 深色化 ---- */
+div[data-testid="stSegmentedControl"] button { border-radius: 8px; }
+/* ---- 卡片网格：桌面3列，手机2列小方块（对标万得） ---- */
+.cardgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 @media (max-width: 768px) {
-  .pnav { padding: 10px 16px; font-size: 14px; }
+  .cardgrid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .cardgrid .mkt-card { min-height: 96px; padding: 10px 12px; }
+  .cardgrid .mkt-px { font-size: 21px; }
 }
 </style>
 """
@@ -405,11 +402,10 @@ def mkt_flow():
         return
     st.markdown('<div class="mkt-sec">主力资金净流入 · 当日累计</div>',
                 unsafe_allow_html=True)
-    cols = st.columns(3)
     syms = [s for s in ["002446", "688305", "HK9660", "HK0354"] if s in ff]
-    for i, sym in enumerate(syms):
-        with cols[i % 3]:
-            st.markdown(_flow_card(sym, ff[sym]), unsafe_allow_html=True)
+    st.markdown(f'<div class="cardgrid">'
+                f'{"".join(_flow_card(s, ff[s]) for s in syms)}</div>',
+                unsafe_allow_html=True)
     st.caption("加密市场无主力资金统计口径 · 数据来自东方财富公开行情")
 
 
@@ -433,12 +429,10 @@ def mkt_breadth():
         f'<div style="width:{up_w:.1f}%;background:#f6465d"></div>'
         f'<div style="width:{100-up_w:.1f}%;background:#2ebd85"></div></div>',
         unsafe_allow_html=True)
-    cols = st.columns(3)
-    for i, t in enumerate(tape):
-        pct = t.get("change_pct") or 0
-        with cols[i % 3]:
-            st.markdown(_mkt_card(t["symbol"], t.get("price") or 0, None, pct),
-                        unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="cardgrid">'
+        f'{"".join(_mkt_card(t["symbol"], t.get("price") or 0, None, t.get("change_pct") or 0) for t in tape)}</div>',
+        unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=300)
@@ -524,23 +518,20 @@ def market_tabs():
 
 
 def market_overview():
-    """市场盘面：指数卡片 + 跟踪标的卡片（三列网格，红涨绿跌）。"""
+    """市场盘面：指数卡片 + 跟踪标的卡片（CSS 网格：桌面3列/手机2列）。"""
     idx = indices_live()
+    cards = []
     if idx:
-        st.markdown('<div class="mkt-sec">指数</div>', unsafe_allow_html=True)
-        cols = st.columns(3)
-        for i, (name, px, chg, pct) in enumerate(idx[:3]):
-            with cols[i % 3]:
-                st.markdown(_mkt_card(name, px, chg, pct), unsafe_allow_html=True)
+        for name, px, chg, pct in idx[:3]:
+            cards.append(_mkt_card(name, px, chg, pct))
     tape = snap.get("tape", []) or []
-    if tape:
-        st.markdown('<div class="mkt-sec">跟踪标的</div>', unsafe_allow_html=True)
-        cols = st.columns(3)
-        for i, t in enumerate(tape):
-            px, pct = t.get("price"), t.get("change_pct") or 0
-            with cols[i % 3]:
-                st.markdown(_mkt_card(t["symbol"], px or 0, None, pct),
-                            unsafe_allow_html=True)
+    for t in tape:
+        px, pct = t.get("price"), t.get("change_pct") or 0
+        cards.append(_mkt_card(t["symbol"], px or 0, None, pct))
+    if not cards:
+        return
+    st.markdown('<div class="mkt-sec">指数 · 跟踪标的</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cardgrid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
 snap = load_snapshot()
@@ -1126,18 +1117,22 @@ def account_card(aid, label, not_started_text=None):
 
 
 def pill_nav(options, key, default):
-    """Pill 导航：query params + 自定义 HTML。桌面端横排，移动端横向滚动；
-    不依赖 Streamlit 按钮内部 DOM，手机/桌面样式一致。返回当前选中。"""
-    cur = st.query_params.get(key, default)
-    if cur not in options:
-        cur = default
-    base = "&".join(f"{k}={v}" for k, v in st.query_params.items() if k != key)
-    pills = []
-    for opt in options:
-        cls = " on" if opt == cur else ""
-        qs = f"{key}={opt}" + (f"&{base}" if base else "")
-        pills.append(f'<a class="pnav{cls}" href="?{qs}" target="_self">{opt}</a>')
-    st.markdown(f'<div class="pnav-row">{"".join(pills)}</div>', unsafe_allow_html=True)
+    """Pill 导航：优先 segmented_control（无整页刷新、移动端原生横滑，
+    不丢会话）；旧版 Streamlit 降级为按钮列。返回当前选中。"""
+    if hasattr(st, "segmented_control"):
+        val = st.segmented_control("导航", list(options), key=key,
+                                   default=default, label_visibility="collapsed")
+        return val if val in options else default
+    # 降级（Streamlit < 1.35）
+    cur = st.session_state.get(key, default)
+    cols = st.columns(len(options))
+    for col, opt in zip(cols, options):
+        with col:
+            if st.button(opt, key=f"{key}_{opt}", use_container_width=True,
+                         type="primary" if cur == opt else "secondary"):
+                st.session_state[key] = opt
+                st.rerun()
+                return opt
     return cur
 
 
