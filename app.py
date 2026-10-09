@@ -97,6 +97,11 @@ table.pos td:first-child { text-align: left; color: #c9cdd6; font-weight: 600; }
           font-size: 26px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2; }
 .mkt-chg { font-size: 13px; margin-top: 6px; font-variant-numeric: tabular-nums; }
 .mkt-sec { font-size: 13px; color: #5f6572; margin: 14px 0 8px; letter-spacing: 1px; }
+/* 市场三 tab：深色胶囊条，选中高亮 */
+div[data-testid="column"] > div > div > button[kind="secondary"] {
+    background: #14181f; border: 1px solid #1a1f2a; color: #8b93a5; border-radius: 8px; }
+div[data-testid="column"] > div > div > button[kind="primary"] {
+    background: #232a36; border: 1px solid #2c3542; color: #e8ecf1; border-radius: 8px; }
 .ev-date { color: #5f6572; margin-right: 8px; white-space: nowrap; }
 .etag { display: inline-block; padding: 1px 8px; border-radius: 4px;
         font-size: 12px; margin-right: 8px; white-space: nowrap; }
@@ -299,6 +304,107 @@ def _mkt_card(name, px, chg=None, pct=None):
     px_cls = "up" if (pct or 0) > 0 else ("down" if (pct or 0) < 0 else "")
     return (f'<div class="mkt-card"><div class="mkt-name">{name}</div>'
             f'<div class="mkt-px num {px_cls}">{px:,.2f}</div>{chg_html}</div>')
+
+
+@st.cache_data(ttl=300)
+def fund_flow_live():
+    """主力资金净额（东方财富公开行情，仅展示）。返回 {标的: 主力净额(元)}。"""
+    sec_map = {"002446": "0.002446", "688305": "1.688305",
+               "HK9660": "116.09660", "HK0354": "116.00354"}
+    inv = {"002446": "002446", "688305": "688305",
+           "09660": "HK9660", "00354": "HK0354"}
+    try:
+        r = requests.get("https://push2delay.eastmoney.com/api/qt/ulist.np/get",
+                         params={"secids": ",".join(sec_map.values()),
+                                 "fields": "f12,f14,f2,f3,f62"},
+                         timeout=10)
+        r.raise_for_status()
+        out = {}
+        for it in r.json()["data"]["diff"]:
+            sym = inv.get(it.get("f12"))
+            if sym:
+                out[sym] = it.get("f62") or 0
+        return out
+    except Exception:
+        return {}
+
+
+def _flow_card(sym, net_yuan):
+    """资金卡片：主力净流入/出（万元），红入绿出。"""
+    w = (net_yuan or 0) / 1e4
+    cls = "up" if w > 0 else ("down" if w < 0 else "flat")
+    arw = "▲" if w > 0 else ("▼" if w < 0 else "")
+    return (f'<div class="mkt-card"><div class="mkt-name">{sym} · 主力净'
+            f'{"流入" if w > 0 else ("流出" if w < 0 else "")}</div>'
+            f'<div class="mkt-px num {cls}">{arw} {abs(w):,.1f}</div>'
+            f'<div class="mkt-chg"><span class="flat">万元</span></div></div>')
+
+
+def mkt_flow():
+    """资金净流入：跟踪标的的主力资金（仅展示）。"""
+    ff = fund_flow_live()
+    if not ff:
+        st.markdown('<div class="empty"><b>暂无资金数据</b>'
+                    '<span>数据源暂时不可用，稍后再看</span></div>',
+                    unsafe_allow_html=True)
+        return
+    st.markdown('<div class="mkt-sec">主力资金净流入 · 当日累计</div>',
+                unsafe_allow_html=True)
+    cols = st.columns(3)
+    syms = [s for s in ["002446", "688305", "HK9660", "HK0354"] if s in ff]
+    for i, sym in enumerate(syms):
+        with cols[i % 3]:
+            st.markdown(_flow_card(sym, ff[sym]), unsafe_allow_html=True)
+    st.caption("加密市场无主力资金统计口径 · 数据来自东方财富公开行情")
+
+
+def mkt_breadth():
+    """涨跌分布：跟踪标的的上涨/下跌家数。"""
+    tape = snap.get("tape", []) or []
+    if not tape:
+        return
+    up = [t for t in tape if (t.get("change_pct") or 0) > 0]
+    dn = [t for t in tape if (t.get("change_pct") or 0) < 0]
+    fl = [t for t in tape if (t.get("change_pct") or 0) == 0]
+    n = len(tape)
+    up_w = len(up) / n * 100 if n else 0
+    st.markdown('<div class="mkt-sec">跟踪标的涨跌分布</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="display:flex;gap:12px;align-items:center;margin:6px 0 10px">'
+        f'<span class="up">涨 {len(up)}</span>'
+        f'<span class="flat">平 {len(fl)}</span>'
+        f'<span class="down">跌 {len(dn)}</span></div>'
+        f'<div style="display:flex;height:10px;border-radius:5px;overflow:hidden">'
+        f'<div style="width:{up_w:.1f}%;background:#f6465d"></div>'
+        f'<div style="width:{100-up_w:.1f}%;background:#2ebd85"></div></div>',
+        unsafe_allow_html=True)
+    cols = st.columns(3)
+    for i, t in enumerate(tape):
+        pct = t.get("change_pct") or 0
+        with cols[i % 3]:
+            st.markdown(_mkt_card(t["symbol"], t.get("price") or 0, None, pct),
+                        unsafe_allow_html=True)
+
+
+def market_tabs():
+    """市场盘面三 tab：行情 / 资金净流入 / 涨跌分布。"""
+    if "mkt_tab" not in st.session_state:
+        st.session_state.mkt_tab = "行情"
+    c1, c2, c3 = st.columns(3)
+    for col, name in zip((c1, c2, c3), ("行情", "资金净流入", "涨跌分布")):
+        with col:
+            active = st.session_state.mkt_tab == name
+            if st.button(name, key=f"mkt_tab_{name}", use_container_width=True,
+                         type="primary" if active else "secondary"):
+                st.session_state.mkt_tab = name
+                st.rerun()
+    tab = st.session_state.mkt_tab
+    if tab == "资金净流入":
+        mkt_flow()
+    elif tab == "涨跌分布":
+        mkt_breadth()
+    else:
+        market_overview()
 
 
 def market_overview():
@@ -939,8 +1045,8 @@ with col_chart:
 with col_panel:
     pending_panel(pend)
 
-# ---------- 市场盘面：指数 + 跟踪标的（万得式卡片） ----------
-market_overview()
+# ---------- 市场盘面三 tab：行情 / 资金净流入 / 涨跌分布 ----------
+market_tabs()
 
 # 股票汇总（一行）：港股按当日 HKDCNY 折算，明细按原生币种独立记账
 pool = snap.get("stock_pool", {}) or {}
