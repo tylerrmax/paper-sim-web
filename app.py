@@ -592,26 +592,70 @@ def pending_panel(items):
 
 
 def event_stream():
-    """统一事件流：信号 + 成交，按日期倒序。"""
-    ev = []
-    for s in snap.get("signals", []) or []:
-        ev.append((s.get("date", ""), "sig", "信号",
-                   f'{s.get("symbol")} {side_cn(s.get("side"))} @{f2(s.get("price"))}'))
-    for f in snap.get("fills", []) or []:
-        ev.append((f.get("date", ""), "fill", "成交",
-                   f'{f.get("symbol")} {side_cn(f.get("side"))} '
-                   f'{(f.get("qty") or 0):g} @{f2(f.get("price"))}'))
-    ev.sort(key=lambda e: e[0], reverse=True)
-    st.markdown('<div class="sec">事件流</div>', unsafe_allow_html=True)
-    if not ev:
-        st.markdown('<div class="empty"><b>暂无事件</b>'
-                    '<span>信号与成交会出现在这里</span></div>', unsafe_allow_html=True)
+    """交易动态：一信号一行，展示信号→审批→成交全生命周期，每笔成交直接标盈亏。"""
+    signals = snap.get("signals", []) or []
+    fills = snap.get("fills", []) or []
+    apprs = snap.get("approvals", []) or []
+    klines = snap.get("klines", {}) or {}
+    last_px = {s: kl[-1][4] for s, kl in klines.items() if kl}
+
+    def _k(x):
+        return (x.get("date"), x.get("account"), x.get("symbol"), x.get("side"))
+    fill_map = {_k(f): f for f in fills}
+    appr_map = {_k(a): a.get("decision") for a in apprs}
+
+    st.markdown('<div class="sec">交易动态</div>', unsafe_allow_html=True)
+    if not signals:
+        st.markdown('<div class="empty"><b>暂无动态</b>'
+                    '<span>信号出现后会在这里跟踪全生命周期</span></div>',
+                    unsafe_allow_html=True)
         return
-    for d, cls, tag, txt in ev[:25]:
-        st.markdown(
-            f'<div class="ev-row"><span class="ev-date num">{d}</span>'
-            f'<span class="etag etag-{cls}">{tag}</span>'
-            f'<span class="num">{txt}</span></div>', unsafe_allow_html=True)
+    # 今日盈亏归因（按快照 asof 口径）：卖出看已实现，买入看浮动
+    t_real, t_float = 0.0, 0.0
+    for f in fills:
+        if f.get("date") != asof:
+            continue
+        if f.get("side") == "SELL":
+            t_real += f.get("pnl") or 0
+        else:
+            lp = last_px.get(f.get("symbol"))
+            if lp:
+                t_float += (lp - (f.get("price") or 0)) * (f.get("qty") or 0)
+    st.markdown(
+        f'<div class="strip"><span class="strip-title">今日盈亏</span>　'
+        f'已实现 {pnl_html(t_real)}　浮动 {pnl_html(t_float)}</div>',
+        unsafe_allow_html=True)
+    for s in signals[:20]:
+        k = _k(s)
+        f = fill_map.get(k)
+        dec = appr_map.get(k)
+        sym, side = s.get("symbol"), s.get("side")
+        head = (f'<span class="ev-date num">{s.get("date")}</span>'
+                f'<span class="num" style="font-weight:700">{sym} {side_cn(side)}</span>'
+                f'<span class="num flat"> @{f2(s.get("price"))}</span>')
+        if f:
+            qty, px = f.get("qty") or 0, f.get("price") or 0
+            if side == "SELL":
+                tail = (f'<span class="etag etag-fill">已成交</span>'
+                        f'<span class="num">{qty:g} @{f2(px)}</span> '
+                        f'<span class="num">已实现 {pnl_html(f.get("pnl") or 0)}</span>')
+            else:
+                lp = last_px.get(sym)
+                upnl = (lp - px) * qty if lp else None
+                tail = (f'<span class="etag etag-fill">已成交</span>'
+                        f'<span class="num">{qty:g} @{f2(px)}</span> '
+                        f'<span class="num">浮动 {pnl_html(upnl)}</span>')
+        elif dec == "skipped":
+            tail = ('<span class="etag" style="background:rgba(122,127,140,.16);'
+                    'color:#8b93a5">已跳过</span>')
+        elif dec == "approved":
+            tail = ('<span class="etag" style="background:rgba(80,140,255,.14);'
+                    'color:#6ea8ff">已批准·待成交</span>')
+        else:
+            tail = '<span class="etag etag-sig">待审批</span>'
+        st.markdown(f'<div class="ev-row">{head}'
+                    f'<span style="margin-left:8px">{tail}</span></div>',
+                    unsafe_allow_html=True)
 
 
 CMD_CN = {"set_status": "运行", "set_mode": "模式",
