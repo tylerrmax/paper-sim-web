@@ -113,6 +113,27 @@ footer { visibility: hidden; }
 @media (max-width: 768px) {
   div[data-testid="column"] { min-width: 100% !important; }
 }
+/* ---- 5 分区改版：状态横幅 / 指标卡 / 留白 ---- */
+.sysbanner { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  border-radius: 10px; margin: 12px 0 4px; font-size: 15px; }
+.sysbanner b { font-size: 16px; }
+.sysbanner span { color: #8b93a5; font-size: 13px; margin-left: auto; }
+.sysbanner.ok { background: rgba(46,189,133,.08); border: 1px solid rgba(46,189,133,.25); }
+.sysbanner.ok b { color: #2ebd85; }
+.sysbanner.warn { background: rgba(240,185,11,.08); border: 1px solid rgba(240,185,11,.3); }
+.sysbanner.warn b { color: #f0b90b; }
+.sysbanner.bad { background: rgba(246,70,93,.08); border: 1px solid rgba(246,70,93,.3); }
+.sysbanner.bad b { color: #f6465d; }
+.metric { background: #10141b; border: 1px solid #1a1f2a; border-radius: 10px;
+  padding: 16px 18px; margin-bottom: 12px; }
+.mlabel { font-size: 13px; color: #8b93a5; margin-bottom: 8px; }
+.mnum { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 22px; font-weight: 700; color: #e8ecf1; }
+.mnum.sub { font-size: 15px; color: #8b93a5; margin-top: 4px; font-weight: 400; }
+.warnline { padding: 10px 14px; background: rgba(240,185,11,.06);
+  border-left: 3px solid #f0b90b; border-radius: 0 8px 8px 0;
+  margin-bottom: 8px; font-size: 14px; color: #d8dce3; }
+.sec { margin-top: 26px !important; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -979,7 +1000,9 @@ def account_card(aid, label, not_started_text=None):
 
 
 
-# ---------- 页眉 ----------
+# ============================================================
+# 页眉 + 顶层导航（5 个一级入口：总览 / 交易 / 验证 / 风控 / 系统）
+# ============================================================
 tape_html()
 st.markdown('### 验证终端 <span class="en-tag">PAPER TRADING TERMINAL</span>',
             unsafe_allow_html=True)
@@ -994,137 +1017,245 @@ else:
 stt, mod = control.get("status"), control.get("mode")
 dot = '<span class="livedot"></span>' if stt == "running" else ""
 
-# ---------- 控制条：一排并列（状态 / 模式 / 操作） ----------
-p1, p2, _, b1, b2 = st.columns([0.9, 0.9, 3.4, 1, 1])
-with p1:
-    st.markdown(
-        f'<span class="pill {"run" if stt == "running" else "pause"}">{dot}'
-        f'{"运行中" if stt == "running" else "已暂停"}</span>',
-        unsafe_allow_html=True)
-with p2:
-    st.markdown(f'<span class="pill">{"自动" if mod == "auto" else "手动"}</span>',
-                unsafe_allow_html=True)
-if b1.button("⏸ 暂停" if stt == "running" else "▶ 开始", width="stretch"):
-    if queue_command("set_status", {"status": "paused" if stt == "running" else "running"}):
-        st.session_state["_ctrl_msg_ts"] = datetime.now().timestamp()
-        st.rerun()
-if b2.button("切手动" if mod == "auto" else "切自动", width="stretch"):
-    if queue_command("set_mode", {"mode": "manual" if mod == "auto" else "auto"}):
-        st.session_state["_ctrl_msg_ts"] = datetime.now().timestamp()
-        st.rerun()
-# 快照更新前，用这条持久提示代替一闪而过的 toast（显示 3 分钟，覆盖约2分钟生效窗口）
-if datetime.now().timestamp() - st.session_state.get("_ctrl_msg_ts", 0) < 180:
-    st.markdown('<div class="strip"><span style="color:#2ebd85">'
-                '✓ 指令已提交，约2分钟内生效（页面会自动刷新）</span></div>',
-                unsafe_allow_html=True)
-
-# ---------- 元信息 + 下一步：并入同一排 ----------
-_ups = []
-_n8 = now.replace(hour=8, minute=0, second=0, microsecond=0)
-if _n8 <= now:
-    _n8 += timedelta(days=1)
-_ups.append(f"BTC日K{_day_word(_n8, now)}08:00收盘后更新")
-_d = now.date()
-while True:
-    _d += timedelta(days=1)
-    if _d.weekday() < 5:
-        break
-_ups.append(f"港股下个交易日{_d.strftime('%m-%d')}")
-if now.date() < date(2026, 10, 8):
-    _ups.append("A股10-08接入验证")
+# 系统状态判定（优先级：数据异常 > 暂停中 > 等待人工确认 > 正常运行）
+_n_pend = len(pend)
+if age > timedelta(minutes=30):
+    _sys_state, _sys_cls = "数据异常", "bad"
+elif stt == "paused":
+    _sys_state, _sys_cls = "暂停中", "warn"
+elif _n_pend > 0 and mod == "manual":
+    _sys_state, _sys_cls = f"等待人工确认（{_n_pend}）", "warn"
+else:
+    _sys_state, _sys_cls = "正常运行", "ok"
 st.markdown(
-    f'<div class="hero-note">数据截至 {asof} · 页面{age_txt}更新 · 每日17:12更新数据 · '
-    f'规则 {snap.get("rule_version", "—")} · '
-    f'<span style="color:#8b93a5">下一步</span> · {" · ".join(_ups)}</div>',
+    f'<div class="sysbanner {_sys_cls}">{dot if _sys_cls == "ok" else ""}'
+    f'<b>{_sys_state}</b>'
+    f'<span>数据 {age_txt}更新 · {"自动" if mod == "auto" else "手动"}模式</span></div>',
     unsafe_allow_html=True)
 
-# ---------- 终端区：净值 + 待审批 ----------
-col_chart, col_panel = st.columns([2, 1])
-with col_chart:
-    nav_chart_svg(snap.get("equity", {}) or {})
-with col_panel:
-    pending_panel(pend)
+# 顶层导航
+if "nav" not in st.session_state:
+    st.session_state.nav = "总览"
+_nav_cols = st.columns(5)
+for _nc, _nn in zip(_nav_cols, ("总览", "交易", "验证", "风控", "系统")):
+    with _nc:
+        _active = st.session_state.nav == _nn
+        if st.button(_nn, key=f"nav_{_nn}", use_container_width=True,
+                     type="primary" if _active else "secondary"):
+            st.session_state.nav = _nn
+            st.rerun()
 
-# ---------- 市场盘面三 tab：行情 / 资金净流入 / 涨跌分布 ----------
-market_tabs()
-
-# 股票汇总（一行）：港股按当日 HKDCNY 折算，明细按原生币种独立记账
-pool = snap.get("stock_pool", {}) or {}
-st.markdown(
-    f'<div class="hero-note">股票总资产（CNY）'
-    f'<span class="num">{f2(pool.get("total_cny"))}</span>'
-    f' · 港股按当日 HKDCNY {pool.get("hkdcny") or "—"} 折算</div>',
-    unsafe_allow_html=True)
-
-col_a, col_hk, col_c = st.columns(3)
+# 聚合指标（总览用）：股票 CNY / 加密 USDT 分开展示，不硬折算
+_pool = snap.get("stock_pool", {}) or {}
+_cnav = (accts.get("sim_crypto", {}) or {}).get("nav") or 0
+_cpnl = (accts.get("sim_crypto", {}) or {}).get("pnl_day")
+_ccash = (accts.get("sim_crypto", {}) or {}).get("cash")
+_cpos = (accts.get("sim_crypto", {}) or {}).get("position_value")
 
 
-# ---------- A股 ----------
-with col_a:
-    a_fills = [f for f in snap.get("fills", []) if f.get("account") == "sim_a"]
-    a_sigs = [s for s in snap.get("signals", []) if s.get("account") == "sim_a"]
-    if asof < VAL_START_A and not a_fills:
-        a_note = "验证期 10-08 开始，届时信号会出现在这里"
-    elif not a_sigs and not a_fills:
-        # 冷启动：数据从 10-08 起算，MA20 需 20 天历史，首个信号预计 11 月初
-        a_note = "数据积累中：MA20 需 20 天历史，首个信号预计 11 月初出现"
+def _metric_card(label, cny_val, usdt_val, cny_ccy="¥", usdt_ccy="$"):
+    _cv = f'<div class="mnum">{cny_ccy}{f2(cny_val)}</div>' if cny_val is not None else ""
+    _uv = f'<div class="mnum sub">{usdt_ccy}{f2(usdt_val)}</div>' if usdt_val is not None else ""
+    return (f'<div class="metric"><div class="mlabel">{label}</div>'
+            f'{_cv}{_uv}</div>')
+
+
+# ============================================================
+# 01 总览：打开即知当前状态
+# ============================================================
+def page_overview():
+    st.markdown('<div class="sec">核心数据</div>', unsafe_allow_html=True)
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.markdown(_metric_card("账户总资产 · 股票/加密",
+                                _pool.get("total_cny"), _cnav),
+                    unsafe_allow_html=True)
+    with m2:
+        _spnl = sum(((accts.get(a, {}) or {}).get("pnl_day") or 0)
+                    for a in ("sim_a", "sim_hk"))
+        st.markdown(_metric_card("当日盈亏", _spnl, _cpnl), unsafe_allow_html=True)
+    with m3:
+        _spos = sum(((accts.get(a, {}) or {}).get("position_value") or 0)
+                    for a in ("sim_a", "sim_hk"))
+        st.markdown(_metric_card("持仓市值", _spos, _cpos), unsafe_allow_html=True)
+    with m4:
+        _scash = sum(((accts.get(a, {}) or {}).get("cash") or 0)
+                     for a in ("sim_a", "sim_hk"))
+        st.markdown(_metric_card("可用资金", _scash, _ccash), unsafe_allow_html=True)
+
+    st.markdown('<div class="sec">市场环境</div>', unsafe_allow_html=True)
+    market_tabs()
+
+    # 今日信号
+    _today_sigs = [s for s in snap.get("signals", []) if s.get("date") == asof]
+    st.markdown('<div class="sec">今日交易信号</div>', unsafe_allow_html=True)
+    if _today_sigs:
+        for s in _today_sigs:
+            _cls = "up" if s.get("side") == "BUY" else "down"
+            st.markdown(
+                f'<div class="kv"><span class="k"><b>{s.get("symbol")}</b> '
+                f'<span class="flat">{ACCT_CN.get(s.get("account"), "")}</span></span>'
+                f'<span class="v {_cls}">{side_cn(s.get("side"))} '
+                f'<span class="num">@{fpx_sym(s.get("symbol"), s.get("price"))}</span></span></div>',
+                unsafe_allow_html=True)
     else:
-        a_note = None
-    account_card("sim_a", "A股", not_started_text=a_note)
+        st.markdown('<div class="empty"><b>今日暂无信号</b>'
+                    '<span>新信号出现时会在此列出，并进入待确认</span></div>',
+                    unsafe_allow_html=True)
 
-# ---------- 港股 ----------
-with col_hk:
-    account_card("sim_hk", "港股")
+    # 风险警告
+    _warns = []
+    if age > timedelta(minutes=30):
+        _warns.append(f"快照已 {age_txt}未更新，同步可能中断")
+    _a_note = None
+    _a_sigs = [s for s in snap.get("signals", []) if s.get("account") == "sim_a"]
+    if not _a_sigs and not [f for f in snap.get("fills", []) if f.get("account") == "sim_a"]:
+        _warns.append("A股数据积累中：MA20 需 20 天历史，首个信号预计 11 月初")
+    if _warns:
+        st.markdown('<div class="sec">风险警告</div>', unsafe_allow_html=True)
+        for w in _warns:
+            st.markdown(f'<div class="warnline">⚠ {w}</div>', unsafe_allow_html=True)
 
-# ---------- 加密货币 ----------
-with col_c:
-    a = accts.get("sim_crypto", {})
-    st.markdown('<div class="hero-label">总资产 · USDT</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="hero-num num">{f2(a.get("nav"))}</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-note">每日更新一次（UTC 日K收盘后）</div>',
-                unsafe_allow_html=True)
-    _live = btc_live()
-    _bp = next((p for p in snap.get("positions", [])
-                if p.get("account") == "sim_crypto"
-                and p.get("symbol") == "BTCUSDT"), None)
-    if _live and _bp and _bp.get("qty"):
-        _close = (_bp.get("market_value") or 0) / _bp["qty"]
-        _chg = (_live - _close) / _close * 100 if _close else 0
-        _cls = "up" if _chg > 0 else ("down" if _chg < 0 else "flat")
-        _arw = "▲" if _chg > 0 else ("▼" if _chg < 0 else "")
-        st.markdown(
-            f'<div class="hero-note">BTC 实时参考 '
-            f'<span class="num">{_live:,.1f}</span> · 持仓参考 '
-            f'<span class="num">{_bp["qty"] * _live:,.2f}</span> '
-            f'<span class="num {_cls}">{_arw} {_chg:+.2f} %</span>'
-            f'（vs 日K收盘，仅参考，不进策略）</div>',
-            unsafe_allow_html=True)
-    st.markdown('<hr class="hairline"/>', unsafe_allow_html=True)
 
-    account_card("sim_crypto", "加密账户")
+# ============================================================
+# 02 交易：只显示需要执行的事
+# ============================================================
+def page_trade():
+    col_chart, col_panel = st.columns([2, 1])
+    with col_chart:
+        st.markdown('<div class="sec">净值走势</div>', unsafe_allow_html=True)
+        nav_chart_svg(snap.get("equity", {}) or {})
+    with col_panel:
+        pending_panel(pend)
 
-# ---------- 事件流 / 指令历史 ----------
-col_ev, col_cmd = st.columns(2)
-with col_ev:
-    event_stream()
-with col_cmd:
-    command_log()
-
-# ---------- 验证仪表盘 ----------
-validation_dashboard()
-
-# ---------- 轮动门槛 ----------
-rg = snap.get("rotation_gate", {}) or {}
-st.markdown(f'<div class="sec">轮动门槛（{rg.get("met", 0)}/{rg.get("total", 3)} 项满足）</div>', unsafe_allow_html=True)
-for it in rg.get("items", []):
+    st.markdown('<div class="sec">持仓</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="kv"><span class="k">{it["label"]} '
-        f'<span class="num">{it["value"] if it["value"] is not None else "—"}{it.get("unit", "")}</span></span>'
-        f'<span class="v">{it.get("status", "")}</span></div>',
+        f'<div class="hero-note">股票总资产（CNY）'
+        f'<span class="num">{f2(_pool.get("total_cny"))}</span>'
+        f' · 港股按当日 HKDCNY {_pool.get("hkdcny") or "—"} 折算</div>',
         unsafe_allow_html=True)
-st.caption(rg.get("note", ""))
+    col_a, col_hk, col_c = st.columns(3)
+    with col_a:
+        _a_fills = [f for f in snap.get("fills", []) if f.get("account") == "sim_a"]
+        _a_sigs = [s for s in snap.get("signals", []) if s.get("account") == "sim_a"]
+        _a_note = ("数据积累中：MA20 需 20 天历史，首个信号预计 11 月初出现"
+                   if not _a_sigs and not _a_fills else None)
+        account_card("sim_a", "A股", not_started_text=_a_note)
+    with col_hk:
+        account_card("sim_hk", "港股")
+    with col_c:
+        account_card("sim_crypto", "加密")
 
-st.markdown(
-    f'<div class="foot">规则版本 {snap.get("rule_version", "—")} · '
-    '信号按日收盘价成交 · 滑点 0.2% · 本站为模拟盘，不构成投资建议</div>',
-    unsafe_allow_html=True)
+    event_stream()
+
+
+# ============================================================
+# 03 验证：判断系统是否值得实盘
+# ============================================================
+def page_verify():
+    validation_dashboard()
+    rg = snap.get("rotation_gate", {}) or {}
+    st.markdown(f'<div class="sec">轮动门槛（{rg.get("met", 0)}/{rg.get("total", 3)} 项满足）</div>',
+                unsafe_allow_html=True)
+    for it in rg.get("items", []):
+        st.markdown(
+            f'<div class="kv"><span class="k">{it["label"]} '
+            f'<span class="num">{it["value"] if it["value"] is not None else "—"}{it.get("unit", "")}</span></span>'
+            f'<span class="v">{it.get("status", "")}</span></div>',
+            unsafe_allow_html=True)
+    st.caption(rg.get("note", ""))
+
+
+# ============================================================
+# 04 风控：仓位限制、止损、回撤、暂停与异常记录
+# ============================================================
+def page_risk():
+    st.markdown('<div class="sec">交易控制</div>', unsafe_allow_html=True)
+    p1, p2, _, b1, b2 = st.columns([0.9, 0.9, 3.4, 1, 1])
+    with p1:
+        st.markdown(
+            f'<span class="pill {"run" if stt == "running" else "pause"}">{dot}'
+            f'{"运行中" if stt == "running" else "已暂停"}</span>',
+            unsafe_allow_html=True)
+    with p2:
+        st.markdown(f'<span class="pill">{"自动" if mod == "auto" else "手动"}</span>',
+                    unsafe_allow_html=True)
+    if b1.button("⏸ 暂停" if stt == "running" else "▶ 开始", width="stretch"):
+        if queue_command("set_status", {"status": "paused" if stt == "running" else "running"}):
+            st.session_state["_ctrl_msg_ts"] = datetime.now().timestamp()
+            st.rerun()
+    if b2.button("切手动" if mod == "auto" else "切自动", width="stretch"):
+        if queue_command("set_mode", {"mode": "manual" if mod == "auto" else "auto"}):
+            st.session_state["_ctrl_msg_ts"] = datetime.now().timestamp()
+            st.rerun()
+    if datetime.now().timestamp() - st.session_state.get("_ctrl_msg_ts", 0) < 180:
+        st.markdown('<div class="strip"><span style="color:#2ebd85">'
+                    '✓ 指令已提交，约2分钟内生效（页面会自动刷新）</span></div>',
+                    unsafe_allow_html=True)
+
+    st.markdown('<div class="sec">异常记录</div>', unsafe_allow_html=True)
+    _issues = []
+    if age > timedelta(minutes=30):
+        _issues.append(("快照同步", f"已 {age_txt}未更新", "bad"))
+    else:
+        _issues.append(("快照同步", f"{age_txt}更新", "ok"))
+    # 数据新鲜度：各市场最新行情日期
+    _klines = snap.get("klines", {}) or {}
+    for _sym in ("002446", "688305", "HK9660", "HK0354", "BTCUSDT"):
+        _kl = _klines.get(_sym) or []
+        if _kl:
+            _issues.append((f"行情 {_sym}", f"截至 {_kl[-1][0]}", "ok"))
+        else:
+            _issues.append((f"行情 {_sym}", "无数据", "bad"))
+    for _label, _val, _st in _issues:
+        _cls = "up" if _st == "ok" else "down"
+        st.markdown(f'<div class="kv"><span class="k">{_label}</span>'
+                    f'<span class="v {_cls}">{_val}</span></div>',
+                    unsafe_allow_html=True)
+
+
+# ============================================================
+# 05 系统：数据源、任务状态、日志、运行配置
+# ============================================================
+def page_system():
+    st.markdown('<div class="sec">数据源</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="kv"><span class="k">快照</span>'
+                f'<span class="v num">{age_txt}更新</span></div>',
+                unsafe_allow_html=True)
+    st.markdown(f'<div class="kv"><span class="k">数据截至</span>'
+                f'<span class="v num">{asof}</span></div>',
+                unsafe_allow_html=True)
+    st.markdown(f'<div class="kv"><span class="k">规则版本</span>'
+                f'<span class="v">{snap.get("rule_version", "—")}</span></div>',
+                unsafe_allow_html=True)
+    st.markdown(f'<div class="kv"><span class="k">GitHub 链路</span>'
+                f'<span class="v">{"正常" if github_link_ok() else "异常"}</span></div>',
+                unsafe_allow_html=True)
+
+    st.markdown('<div class="sec">运行配置</div>', unsafe_allow_html=True)
+    _ups = []
+    _n8 = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    if _n8 <= now:
+        _n8 += timedelta(days=1)
+    _ups.append(f"BTC日K{_day_word(_n8, now)}08:00收盘后更新")
+    _d = now.date()
+    while True:
+        _d += timedelta(days=1)
+        if _d.weekday() < 5:
+            break
+    _ups.append(f"港股下个交易日{_d.strftime('%m-%d')}")
+    st.markdown(
+        f'<div class="hero-note">每日17:12更新数据 · '
+        f'<span style="color:#8b93a5">下一步</span> · {" · ".join(_ups)}</div>',
+        unsafe_allow_html=True)
+
+    command_log()
+    st.markdown(
+        f'<div class="foot">规则版本 {snap.get("rule_version", "—")} · '
+        '信号按日收盘价成交 · 滑点 0.2% · 本站为模拟盘，不构成投资建议</div>',
+        unsafe_allow_html=True)
+
+
+# 路由
+{"总览": page_overview, "交易": page_trade, "验证": page_verify,
+ "风控": page_risk, "系统": page_system}[st.session_state.nav]()
