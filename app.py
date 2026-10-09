@@ -429,12 +429,81 @@ def mkt_breadth():
                         unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=300)
+def northbound_live():
+    """北向资金（东方财富公开行情，仅展示）。
+    返回 (今日净流入亿元, [(MM-DD, 净流入亿元)], 沪股通今日, 深股通今日)。"""
+    try:
+        r = requests.get("https://push2delay.eastmoney.com/api/qt/kamt.kline/get",
+                         params={"fields1": "f1,f3,f5", "fields2": "f51,f52",
+                                 "klt": "101", "lmt": "6"},
+                         timeout=10)
+        r.raise_for_status()
+        d = r.json()["data"]
+
+        def _parse(key):
+            out = []
+            for item in d.get(key, []) or []:
+                p = item.split(",")
+                if len(p) == 2:
+                    try:
+                        out.append((p[0][5:], float(p[1])))
+                    except ValueError:
+                        pass
+            return out
+        s2n = _parse("s2n")      # 北向合计
+        hsh = _parse("hk2sh")    # 沪股通
+        hsz = _parse("hk2sz")    # 深股通
+        today = s2n[-1][1] if s2n else 0
+        return today, s2n, (hsh[-1][1] if hsh else 0), (hsz[-1][1] if hsz else 0)
+    except Exception:
+        return None
+
+
+def mkt_northbound():
+    """北向资金：今日净流入 + 沪/深拆分 + 近5日趋势（仅展示）。"""
+    nb = northbound_live()
+    if nb is None:
+        st.markdown('<div class="empty"><b>暂无北向数据</b>'
+                    '<span>数据源暂时不可用，稍后再看</span></div>',
+                    unsafe_allow_html=True)
+        return
+    today, hist, hsh_t, hsz_t = nb
+    cls = "up" if today > 0 else ("down" if today < 0 else "flat")
+    arw = "▲" if today > 0 else ("▼" if today < 0 else "")
+    st.markdown('<div class="mkt-sec">北向资金 · 当日净流入</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="mkt-card"><div class="mkt-name">北向合计（亿元）</div>'
+        f'<div class="mkt-px num {cls}">{arw} {today:+,.1f}</div>'
+        f'<div class="mkt-chg"><span class="flat">沪股通 {hsh_t:+,.1f} 亿　'
+        f'深股通 {hsz_t:+,.1f} 亿</span></div></div>',
+        unsafe_allow_html=True)
+    if len(hist) >= 2:
+        st.markdown('<div class="mkt-sec">近5个交易日</div>', unsafe_allow_html=True)
+        _max = max(abs(v) for _, v in hist) or 1
+        bars = []
+        for dt, v in hist[-5:]:
+            _c = "up" if v > 0 else ("down" if v < 0 else "flat")
+            _h = max(abs(v) / _max * 64, 3)
+            bars.append(
+                f'<div style="flex:1;text-align:center">'
+                f'<div style="height:64px;display:flex;align-items:flex-end;justify-content:center">'
+                f'<div style="width:70%;height:{_h:.0f}px;border-radius:3px;'
+                f'background:{"#f6465d" if v > 0 else ("#2ebd85" if v < 0 else "#5f6572")}"></div></div>'
+                f'<div class="num {_c}" style="font-size:11px;margin-top:4px">{v:+.0f}</div>'
+                f'<div class="flat" style="font-size:11px">{dt}</div></div>')
+        st.markdown(f'<div style="display:flex;gap:6px">{"".join(bars)}</div>'
+                    f'<div class="flat" style="font-size:11px;margin-top:6px">单位：亿元，红为净流入</div>',
+                    unsafe_allow_html=True)
+    st.caption("休市日显示上一交易日数据 · 数据来自东方财富公开行情")
+
+
 def market_tabs():
-    """市场盘面三 tab：行情 / 资金净流入 / 涨跌分布。"""
+    """市场盘面四 tab：行情 / 资金净流入 / 北向资金 / 涨跌分布。"""
     if "mkt_tab" not in st.session_state:
         st.session_state.mkt_tab = "行情"
-    c1, c2, c3 = st.columns(3)
-    for col, name in zip((c1, c2, c3), ("行情", "资金净流入", "涨跌分布")):
+    cols = st.columns(4)
+    for col, name in zip(cols, ("行情", "资金净流入", "北向资金", "涨跌分布")):
         with col:
             active = st.session_state.mkt_tab == name
             if st.button(name, key=f"mkt_tab_{name}", use_container_width=True,
@@ -444,6 +513,8 @@ def market_tabs():
     tab = st.session_state.mkt_tab
     if tab == "资金净流入":
         mkt_flow()
+    elif tab == "北向资金":
+        mkt_northbound()
     elif tab == "涨跌分布":
         mkt_breadth()
     else:
