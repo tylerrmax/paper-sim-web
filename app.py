@@ -316,10 +316,39 @@ def queue_command(kind, payload):
         st.error(f"提交失败：{e}")
         return False
     if r.status_code in (200, 201):
-        st.toast("指令已提交，约2分钟内生效")
         return True
-    st.error(f"提交失败（{r.status_code}）")
+    if r.status_code == 401:
+        st.error("提交失败：GitHub token 无效或已过期 → 去 Streamlit Secrets 更换 GITHUB_TOKEN")
+    elif r.status_code == 403:
+        st.error("提交失败：token 权限不足（需要给 paper-sim-web 仓库 Contents 读写权限）")
+    elif r.status_code == 404:
+        st.error("提交失败：仓库不存在 → 检查 Secrets 里的 GITHUB_REPO 是否写对")
+    else:
+        st.error(f"提交失败（{r.status_code}），稍后重试")
     return False
+
+
+def github_link_ok():
+    """指令链路自检：token 能否读到仓库。结果缓存 5 分钟，避免每次刷新都打 API。"""
+    now = datetime.now().timestamp()
+    cached = st.session_state.get("_link_check")
+    if cached and now - cached[0] < 300:
+        return cached[1]
+    token = st.secrets.get("GITHUB_TOKEN", "")
+    repo = st.secrets.get("GITHUB_REPO", "")
+    ok = False
+    if token and repo:
+        try:
+            r = requests.get(
+                f"https://api.github.com/repos/{repo}",
+                headers={"Authorization": f"Bearer {token}",
+                         "Accept": "application/vnd.github+json"},
+                timeout=10)
+            ok = r.status_code == 200
+        except Exception:
+            ok = False
+    st.session_state["_link_check"] = (now, ok)
+    return ok
 
 
 # ---------- 净值走势（起点=100，日期对齐） ----------
@@ -518,8 +547,17 @@ def pending_panel(items):
                     '<span>有信号会在这里出现，等你批准</span></div>',
                     unsafe_allow_html=True)
         return
-    st.markdown(f'<div class="sec">待审批 <span class="badge">{len(items)}</span></div>',
+    st.markdown(f'<div class="sec">待审批 <span class="badge">{len(items)}</span>'
+                f'<span style="font-weight:400;font-size:12px;color:#5f6572;margin-left:10px">'
+                f'{"<span class=\"livedot\"></span>指令链路正常" if github_link_ok() else '
+                f'"<span style=\"color:#f6465d\">●</span> 指令链路异常，提交会失败"}'
+                f'</span></div>',
                 unsafe_allow_html=True)
+    # 已提交追踪：点过批准/跳过后，即使快照还没更新，也明确显示"已提交"，
+    # 不再让用户对着一条已提交的信号反复点。快照更新（信号消失）后自动清理。
+    submitted = st.session_state.setdefault("submitted_cmds", set())
+    cur_keys = {f'{p["account"]}_{p["date"]}_{p["symbol"]}_{p["side"]}' for p in items}
+    submitted.intersection_update(cur_keys)
     for p in items:
         st.markdown(
             f'<div class="sig-row"><span class="num">{p["date"]} {p["symbol"]} '
@@ -527,15 +565,22 @@ def pending_panel(items):
             f'<span class="flat" style="font-size:12px">'
             f'{ACCT_CN.get(p.get("account"), "")}</span></div>',
             unsafe_allow_html=True)
-        b1, b2 = st.columns(2)
         key = f'{p["account"]}_{p["date"]}_{p["symbol"]}_{p["side"]}'
+        if key in submitted:
+            st.markdown('<div style="font-size:12px;color:#2ebd85;padding:4px 2px">'
+                        '✓ 已提交，约2分钟内生效（页面会自动刷新）</div>',
+                        unsafe_allow_html=True)
+            continue
+        b1, b2 = st.columns(2)
         if b1.button("批准", key="ap_" + key, width="stretch"):
             if queue_command("approve", {"date": p["date"], "account": p["account"],
                                          "symbol": p["symbol"], "side": p["side"]}):
+                submitted.add(key)
                 st.rerun()
         if b2.button("跳过", key="sk_" + key, width="stretch"):
             if queue_command("skip", {"date": p["date"], "account": p["account"],
                                       "symbol": p["symbol"], "side": p["side"]}):
+                submitted.add(key)
                 st.rerun()
 
 
