@@ -89,6 +89,13 @@ table.pos td:first-child { text-align: left; color: #c9cdd6; font-weight: 600; }
 .tape-item .num { color: #c9cdd6; }
 .ev-row { display: flex; align-items: baseline; padding: 6px 2px;
           border-bottom: 1px solid #161b24; font-size: 13px; }
+.mkt-card { background: #10141b; border: 1px solid #1a1f2a; border-radius: 8px;
+            padding: 12px 14px; margin-bottom: 10px; }
+.mkt-name { font-size: 13px; color: #aab; margin-bottom: 6px; }
+.mkt-px { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+          font-size: 24px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2; }
+.mkt-chg { font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.mkt-sec { font-size: 13px; color: #5f6572; margin: 14px 0 8px; letter-spacing: 1px; }
 .ev-date { color: #5f6572; margin-right: 8px; white-space: nowrap; }
 .etag { display: inline-block; padding: 1px 8px; border-radius: 4px;
         font-size: 12px; margin-right: 8px; white-space: nowrap; }
@@ -215,6 +222,31 @@ def btc_live():
         return None
 
 
+@st.cache_data(ttl=60)
+def indices_live():
+    """A股三大指数实时（新浪公开行情，仅展示）。返回 [(名称, 现价, 涨跌额, 涨跌幅%), ...]。"""
+    try:
+        r = requests.get("https://hq.sinajs.cn/list=s_sh000001,s_sz399001,s_sz399006",
+                         headers={"Referer": "https://finance.sina.com.cn"},
+                         timeout=8)
+        r.raise_for_status()
+        out = []
+        for line in r.text.strip().splitlines():
+            # 指数格式 var hq_str_s_sh000001="上证指数,3813.79,1.89,0.05,..."
+            # 字段：名称,现价,涨跌额,涨跌幅%,...（注意不是昨收）
+            m = line.split('"')
+            if len(m) < 2:
+                continue
+            f = m[1].split(",")
+            if len(f) < 4:
+                continue
+            name, px, chg, pct = f[0], float(f[1]), float(f[2]), float(f[3])
+            out.append((name, px, chg, pct))
+        return out
+    except Exception:
+        return []
+
+
 def _day_word(dt, now):
     dd = (dt.date() - now.date()).days
     if dd <= 0:
@@ -251,6 +283,55 @@ def tape_html():
     half = "".join(f'<span class="tape-item">{it}</span>' for it in items)
     st.markdown(f'<div class="tape"><div class="tape-inner">{half}</div></div>',
                 unsafe_allow_html=True)
+
+
+def _mkt_card(name, px, chg=None, pct=None):
+    """万得式指数/标的卡片：大数字 + 红涨绿跌。chg 为 None 时只显示涨跌幅。"""
+    if pct is None:
+        chg_html = ""
+    else:
+        cls = "up" if pct > 0 else ("down" if pct < 0 else "flat")
+        arw = "▲" if pct > 0 else ("▼" if pct < 0 else "")
+        pts = f'{arw} {chg:+,.2f}　' if chg is not None else f'{arw} '
+        chg_html = (f'<div class="mkt-chg"><span class="{cls}">'
+                    f'{pts}{pct:+.2f}%</span></div>')
+    px_cls = "up" if (pct or 0) > 0 else ("down" if (pct or 0) < 0 else "")
+    return (f'<div class="mkt-card"><div class="mkt-name">{name}</div>'
+            f'<div class="mkt-px num {px_cls}">{px:,.2f}</div>{chg_html}</div>')
+
+
+def market_overview():
+    """市场盘面：指数卡片 + 跟踪标的卡片（三列网格，红涨绿跌）。"""
+    idx = indices_live()
+    if idx:
+        st.markdown('<div class="mkt-sec">指数</div>', unsafe_allow_html=True)
+        cols = st.columns(3)
+        for i, (name, px, chg, pct) in enumerate(idx[:3]):
+            with cols[i % 3]:
+                st.markdown(_mkt_card(name, px, chg, pct), unsafe_allow_html=True)
+    tape = snap.get("tape", []) or []
+    if tape:
+        st.markdown('<div class="mkt-sec">跟踪标的</div>', unsafe_allow_html=True)
+        # 分组：A股 / 港股 / 加密
+        groups = [("A股", []), ("港股", []), ("加密", [])]
+        for t in tape:
+            s = t.get("symbol", "")
+            if s == "BTCUSDT":
+                groups[2][1].append(t)
+            elif s.upper().startswith("HK"):
+                groups[1][1].append(t)
+            else:
+                groups[0][1].append(t)
+        for gname, items in groups:
+            if not items:
+                continue
+            st.caption(gname)
+            cols = st.columns(3)
+            for i, t in enumerate(items):
+                px, pct = t.get("price"), t.get("change_pct") or 0
+                with cols[i % 3]:
+                    st.markdown(_mkt_card(t["symbol"], px or 0, None, pct),
+                                unsafe_allow_html=True)
 
 
 snap = load_snapshot()
@@ -845,6 +926,9 @@ with col_chart:
     nav_chart_svg(snap.get("equity", {}) or {})
 with col_panel:
     pending_panel(pend)
+
+# ---------- 市场盘面：指数 + 跟踪标的（万得式卡片） ----------
+market_overview()
 
 # 股票汇总（一行）：港股按当日 HKDCNY 折算，明细按原生币种独立记账
 pool = snap.get("stock_pool", {}) or {}
