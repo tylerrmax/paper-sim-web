@@ -351,6 +351,18 @@ def f2(x):
     return "—" if x is None else f"{x:,.2f}"
 
 
+def fpx_sym(sym, x):
+    """交易所式价格：港股3位、加密1位无千分位、A股2位。"""
+    if x is None:
+        return "—"
+    s = str(sym or "").upper()
+    if s.endswith("USDT"):
+        return f"{x:,.1f}".replace(",", "")
+    if s.startswith("HK"):
+        return f"{x:,.3f}"
+    return f"{x:,.2f}"
+
+
 def fpx(x):
     """价格显示：大数用千分位，小数保留4位去尾零，永不科学计数法。"""
     if x is None:
@@ -673,7 +685,7 @@ def pending_panel(items):
 
 
 def event_stream():
-    """交易动态：一信号一行，展示信号→审批→成交全生命周期，每笔成交直接标盈亏。"""
+    """交易动态：交易所式流水表，一信号一行。列：日期|标的|方向|数量|价格|盈亏。"""
     signals = snap.get("signals", []) or []
     fills = snap.get("fills", []) or []
     apprs = snap.get("approvals", []) or []
@@ -706,37 +718,50 @@ def event_stream():
         f'<div class="strip"><span class="strip-title">今日盈亏</span>　'
         f'已实现 {pnl_html(t_real)}　浮动 {pnl_html(t_float)}</div>',
         unsafe_allow_html=True)
+
+    rows = []
     for s in signals[:20]:
         k = _k(s)
         f = fill_map.get(k)
         dec = appr_map.get(k)
         sym, side = s.get("symbol"), s.get("side")
-        head = (f'<span class="ev-date num">{s.get("date")}</span>'
-                f'<span class="num" style="font-weight:700">{sym} {side_cn(side)}</span>'
-                f'<span class="num flat"> @{f2(s.get("price"))}</span>')
+        acct = ACCT_CN.get(s.get("account"), "")
+        d = (s.get("date") or "")[5:].replace("-", "/")
+        side_cls = "up" if side == "BUY" else "down"
         if f:
             qty, px = f.get("qty") or 0, f.get("price") or 0
             if side == "SELL":
-                tail = (f'<span class="etag etag-fill">已成交</span>'
-                        f'<span class="num">{qty:g} @{f2(px)}</span> '
-                        f'<span class="num">已实现 {pnl_html(f.get("pnl") or 0)}</span>')
+                pnl_txt = f'已实现 {pnl_html(f.get("pnl") or 0)}'
             else:
                 lp = last_px.get(sym)
                 upnl = (lp - px) * qty if lp else None
-                tail = (f'<span class="etag etag-fill">已成交</span>'
-                        f'<span class="num">{qty:g} @{f2(px)}</span> '
-                        f'<span class="num">浮动 {pnl_html(upnl)}</span>')
+                pnl_txt = f'浮动 {pnl_html(upnl)}'
+            status = '<span class="etag etag-fill">成交</span>'
+            price_txt, qty_txt = fpx_sym(sym, px), f"{qty:g}"
         elif dec == "skipped":
-            tail = ('<span class="etag" style="background:rgba(122,127,140,.16);'
-                    'color:#8b93a5">已跳过</span>')
+            status, price_txt, qty_txt, pnl_txt = (
+                '<span class="etag" style="background:rgba(122,127,140,.16);'
+                'color:#8b93a5">跳过</span>', fpx_sym(sym, s.get("price")), "—", "—")
         elif dec == "approved":
-            tail = ('<span class="etag" style="background:rgba(80,140,255,.14);'
-                    'color:#6ea8ff">已批准·待成交</span>')
+            status, price_txt, qty_txt, pnl_txt = (
+                '<span class="etag" style="background:rgba(80,140,255,.14);'
+                'color:#6ea8ff">待成交</span>', fpx_sym(sym, s.get("price")), "—", "—")
         else:
-            tail = '<span class="etag etag-sig">待审批</span>'
-        st.markdown(f'<div class="ev-row">{head}'
-                    f'<span style="margin-left:8px">{tail}</span></div>',
-                    unsafe_allow_html=True)
+            status, price_txt, qty_txt, pnl_txt = (
+                '<span class="etag etag-sig">待审批</span>', fpx_sym(sym, s.get("price")),
+                "—", "—")
+        rows.append(
+            f'<tr><td class="num">{d}</td>'
+            f'<td><b>{sym}</b> <span class="flat" style="font-size:11px">{acct}</span></td>'
+            f'<td class="{side_cls}">{side_cn(side)}</td>'
+            f'<td class="num">{qty_txt}</td>'
+            f'<td class="num">{price_txt}</td>'
+            f'<td>{status}</td>'
+            f'<td class="num">{pnl_txt}</td></tr>')
+    st.markdown(
+        '<table class="pos"><thead><tr><th>日期</th><th>标的</th><th>方向</th>'
+        '<th>数量</th><th>价格</th><th>状态</th><th>盈亏</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>', unsafe_allow_html=True)
 
 
 CMD_CN = {"set_status": "运行", "set_mode": "模式",
