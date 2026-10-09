@@ -312,26 +312,12 @@ def market_overview():
     tape = snap.get("tape", []) or []
     if tape:
         st.markdown('<div class="mkt-sec">跟踪标的</div>', unsafe_allow_html=True)
-        # 分组：A股 / 港股 / 加密
-        groups = [("A股", []), ("港股", []), ("加密", [])]
-        for t in tape:
-            s = t.get("symbol", "")
-            if s == "BTCUSDT":
-                groups[2][1].append(t)
-            elif s.upper().startswith("HK"):
-                groups[1][1].append(t)
-            else:
-                groups[0][1].append(t)
-        for gname, items in groups:
-            if not items:
-                continue
-            st.caption(gname)
-            cols = st.columns(3)
-            for i, t in enumerate(items):
-                px, pct = t.get("price"), t.get("change_pct") or 0
-                with cols[i % 3]:
-                    st.markdown(_mkt_card(t["symbol"], px or 0, None, pct),
-                                unsafe_allow_html=True)
+        cols = st.columns(3)
+        for i, t in enumerate(tape):
+            px, pct = t.get("price"), t.get("change_pct") or 0
+            with cols[i % 3]:
+                st.markdown(_mkt_card(t["symbol"], px or 0, None, pct),
+                            unsafe_allow_html=True)
 
 
 snap = load_snapshot()
@@ -968,11 +954,16 @@ col_a, col_hk, col_c = st.columns(3)
 
 # ---------- A股 ----------
 with col_a:
-    a_not_started = (asof < VAL_START_A and
-                     not [f for f in snap.get("fills", []) if f.get("account") == "sim_a"])
-    account_card("sim_a", "A股",
-                 not_started_text="验证期 10-08 开始，届时信号会出现在这里"
-                 if a_not_started else None)
+    a_fills = [f for f in snap.get("fills", []) if f.get("account") == "sim_a"]
+    a_sigs = [s for s in snap.get("signals", []) if s.get("account") == "sim_a"]
+    if asof < VAL_START_A and not a_fills:
+        a_note = "验证期 10-08 开始，届时信号会出现在这里"
+    elif not a_sigs and not a_fills:
+        # 冷启动：数据从 10-08 起算，MA20 需 20 天历史，首个信号预计 11 月初
+        a_note = "数据积累中：MA20 需 20 天历史，首个信号预计 11 月初出现"
+    else:
+        a_note = None
+    account_card("sim_a", "A股", not_started_text=a_note)
 
 # ---------- 港股 ----------
 with col_hk:
