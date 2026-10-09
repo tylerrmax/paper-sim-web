@@ -90,11 +90,12 @@ table.pos td:first-child { text-align: left; color: #c9cdd6; font-weight: 600; }
 .ev-row { display: flex; align-items: baseline; padding: 6px 2px;
           border-bottom: 1px solid #161b24; font-size: 13px; }
 .mkt-card { background: #10141b; border: 1px solid #1a1f2a; border-radius: 8px;
-            padding: 12px 14px; margin-bottom: 10px; }
+            padding: 14px 16px 12px; margin-bottom: 12px; min-height: 112px;
+            display: flex; flex-direction: column; justify-content: center; }
 .mkt-name { font-size: 13px; color: #aab; margin-bottom: 6px; }
 .mkt-px { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-          font-size: 24px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2; }
-.mkt-chg { font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+          font-size: 26px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2; }
+.mkt-chg { font-size: 13px; margin-top: 6px; font-variant-numeric: tabular-nums; }
 .mkt-sec { font-size: 13px; color: #5f6572; margin: 14px 0 8px; letter-spacing: 1px; }
 .ev-date { color: #5f6572; margin-right: 8px; white-space: nowrap; }
 .etag { display: inline-block; padding: 1px 8px; border-radius: 4px;
