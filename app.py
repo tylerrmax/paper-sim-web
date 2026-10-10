@@ -460,6 +460,9 @@ def northbound_live():
         s2n = _parse("s2n")      # 北向合计
         hsh = _parse("hk2sh")    # 沪股通
         hsz = _parse("hk2sz")    # 深股通
+        if not s2n or all(v == 0 for _, v in s2n):
+            # 历史序列为空或全零：接口已停更，按数据诚信规则报未知，不显示误导性 0.0
+            return None
         today = s2n[-1][1] if s2n else 0
         return today, s2n, (hsh[-1][1] if hsh else 0), (hsz[-1][1] if hsz else 0)
     except Exception:
