@@ -160,10 +160,19 @@ footer { visibility: hidden; }
 div[data-testid="stSegmentedControl"] button { border-radius: 8px; }
 /* ---- 卡片网格：桌面3列，手机2列小方块（对标万得） ---- */
 .cardgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cardgrid .kpi, .cardgrid .metric, .cardgrid .stcard { margin-bottom: 0; }
 @media (max-width: 768px) {
   .cardgrid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .cardgrid .mkt-card { min-height: 96px; padding: 10px 12px; }
   .cardgrid .mkt-px { font-size: 21px; }
+  .cardgrid .kpi { padding: 12px 14px; }
+  .cardgrid .kpi-value { font-size: 20px; }
+  .cardgrid .kpi-label { font-size: 12px; }
+  .cardgrid .kpi-sub { font-size: 11px; }
+  .cardgrid .metric { padding: 12px 14px; }
+  .cardgrid .mnum { font-size: 18px; }
+  .cardgrid .mnum.sub { font-size: 13px; }
+  .cardgrid .mlabel { font-size: 12px; margin-bottom: 6px; }
 }
 </style>
 """
@@ -821,58 +830,47 @@ def validation_dashboard():
             return "wait"
         return "ok" if ok else "bad"
 
-    k1, k2, k3 = st.columns(3)
-    with k1:
-        st.markdown(_kpi_card(
-            "验证期收益",
-            '<span class="num flat">—</span>' if vret is None
-            else f'<span class="num {"up" if vret > 0 else ("down" if vret < 0 else "flat")}">'
-                 f'{vret * 100:+.2f}%</span>',
-            f"验证期 {a.get('val_start', '—')} 至今",
-            _st(vret is not None and vret > 0)), unsafe_allow_html=True)
-    with k2:
-        st.markdown(_kpi_card(
-            "样本进度",
-            f'<span class="num">{n}</span>'
-            f'<span class="kpi-unit"> / {smin}–{smax}笔</span>',
-            f"验证期自 {a.get('val_start', '—')} 起",
-            _st(True)), unsafe_allow_html=True)
-    with k3:
-        st.markdown(_kpi_card(
-            "期望值 / 笔",
-            '<span class="num flat">—</span>' if exp is None
-            else f'<span class="num {"up" if exp > 0 else "down"}">{exp:+,.2f}</span>',
-            "目标 &gt; 0",
-            _st(exp is not None and exp > 0)), unsafe_allow_html=True)
-    k4, k5, k6, k7 = st.columns(4)
-    with k4:
-        st.markdown(_kpi_card(
-            "胜率",
-            '<span class="num flat">—</span>' if wr is None
-            else f'<span class="num">{wr * 100:.1f}%</span>',
-            f"{wins} / {total} 笔" if total else "仅记录",
-            "wait" if wr is None else None), unsafe_allow_html=True)
-    with k5:
-        st.markdown(_kpi_card(
-            "盈亏比",
-            '<span class="num flat">—</span>' if wlr is None
-            else f'<span class="num {"up" if wlr >= wlr_t else "down"}">{wlr:,.2f}</span>',
-            f"目标 ≥ {wlr_t:g}（硬线）",
-            _st(wlr is not None and wlr >= wlr_t)), unsafe_allow_html=True)
-    with k6:
-        st.markdown(_kpi_card(
-            "盈利因子",
-            '<span class="num flat">—</span>' if pf is None
-            else f'<span class="num">{pf:,.2f}</span>',
-            "仅参考",
-            "wait" if pf is None else None), unsafe_allow_html=True)
-    with k7:
-        st.markdown(_kpi_card(
-            "最大回撤",
-            '<span class="num flat">—</span>' if mdd is None
-            else f'<span class="num {"up" if mdd <= mdd_t else "down"}">{mdd * 100:.2f}%</span>',
-            f"目标 ≤ {mdd_t * 100:.0f}%",
-            _st(mdd is not None and mdd <= mdd_t)), unsafe_allow_html=True)
+    _kpis = [
+        ("验证期收益",
+         '<span class="num flat">—</span>' if vret is None
+         else f'<span class="num {"up" if vret > 0 else ("down" if vret < 0 else "flat")}">'
+              f'{vret * 100:+.2f}%</span>',
+         f"验证期 {a.get('val_start', '—')} 至今",
+         _st(vret is not None and vret > 0)),
+        ("样本进度",
+         f'<span class="num">{n}</span>'
+         f'<span class="kpi-unit"> / {smin}–{smax}笔</span>',
+         f"验证期自 {a.get('val_start', '—')} 起",
+         _st(True)),
+        ("期望值 / 笔",
+         '<span class="num flat">—</span>' if exp is None
+         else f'<span class="num {"up" if exp > 0 else "down"}">{exp:+,.2f}</span>',
+         "目标 &gt; 0",
+         _st(exp is not None and exp > 0)),
+        ("胜率",
+         '<span class="num flat">—</span>' if wr is None
+         else f'<span class="num">{wr * 100:.1f}%</span>',
+         f"{wins} / {total} 笔" if total else "仅记录",
+         "wait" if wr is None else None),
+        ("盈亏比",
+         '<span class="num flat">—</span>' if wlr is None
+         else f'<span class="num {"up" if wlr >= wlr_t else "down"}">{wlr:,.2f}</span>',
+         f"目标 ≥ {wlr_t:g}（硬线）",
+         _st(wlr is not None and wlr >= wlr_t)),
+        ("盈利因子",
+         '<span class="num flat">—</span>' if pf is None
+         else f'<span class="num">{pf:,.2f}</span>',
+         "仅参考",
+         "wait" if pf is None else None),
+        ("最大回撤",
+         '<span class="num flat">—</span>' if mdd is None
+         else f'<span class="num {"up" if mdd <= mdd_t else "down"}">{mdd * 100:.2f}%</span>',
+         f"目标 ≤ {mdd_t * 100:.0f}%",
+         _st(mdd is not None and mdd <= mdd_t)),
+    ]
+    st.markdown(f'<div class="cardgrid">'
+                f'{"".join(_kpi_card(lbl, val, sub, st_) for lbl, val, sub, st_ in _kpis)}</div>',
+                unsafe_allow_html=True)
     st.caption("● 达标　● 未达标　● 样本不足　" + (g.get("execution_note") or ""))
 
 
@@ -1252,23 +1250,20 @@ def _metric_card(label, cny_val, usdt_val, cny_ccy="¥", usdt_ccy="$"):
 # ============================================================
 def page_overview():
     st.markdown('<div class="sec">核心数据</div>', unsafe_allow_html=True)
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.markdown(_metric_card("账户总资产 · 股票/加密",
-                                _pool.get("total_cny"), _cnav),
-                    unsafe_allow_html=True)
-    with m2:
-        _spnl = sum(((accts.get(a, {}) or {}).get("pnl_day") or 0)
-                    for a in ("sim_a", "sim_hk"))
-        st.markdown(_metric_card("当日盈亏", _spnl, _cpnl), unsafe_allow_html=True)
-    with m3:
-        _spos = sum(((accts.get(a, {}) or {}).get("position_value") or 0)
-                    for a in ("sim_a", "sim_hk"))
-        st.markdown(_metric_card("持仓市值", _spos, _cpos), unsafe_allow_html=True)
-    with m4:
-        _scash = sum(((accts.get(a, {}) or {}).get("cash") or 0)
-                     for a in ("sim_a", "sim_hk"))
-        st.markdown(_metric_card("可用资金", _scash, _ccash), unsafe_allow_html=True)
+    _spnl = sum(((accts.get(a, {}) or {}).get("pnl_day") or 0)
+                for a in ("sim_a", "sim_hk"))
+    _spos = sum(((accts.get(a, {}) or {}).get("position_value") or 0)
+                for a in ("sim_a", "sim_hk"))
+    _scash = sum(((accts.get(a, {}) or {}).get("cash") or 0)
+                 for a in ("sim_a", "sim_hk"))
+    _mcards = [
+        _metric_card("账户总资产 · 股票/加密", _pool.get("total_cny"), _cnav),
+        _metric_card("当日盈亏", _spnl, _cpnl),
+        _metric_card("持仓市值", _spos, _cpos),
+        _metric_card("可用资金", _scash, _ccash),
+    ]
+    st.markdown(f'<div class="cardgrid">{"".join(_mcards)}</div>',
+                unsafe_allow_html=True)
 
     st.markdown('<div class="sec">市场环境</div>', unsafe_allow_html=True)
     market_tabs()
@@ -1400,16 +1395,16 @@ def page_risk():
     _cards.append(("交易引擎", "运行中" if stt == "running" else "已暂停",
                    f"{'自动' if mod == 'auto' else '手动'}模式",
                    "ok" if stt == "running" else "warn"))
-    rc1, rc2, rc3, rc4 = st.columns(4)
-    for _rc, (_label, _val, _sub, _st) in zip((rc1, rc2, rc3, rc4), _cards):
-        with _rc:
-            st.markdown(
-                f'<div class="stcard"><div class="kpi-head">'
-                f'<span class="kpi-label">{_label}</span>'
-                f'<span class="stpill {_st}">'
-                f'{"正常" if _st == "ok" else ("注意" if _st == "warn" else "异常")}</span></div>'
-                f'<div class="kpi-value">{_val}</div>'
-                f'<div class="kpi-sub">{_sub}</div></div>',
+    _stcards = []
+    for _label, _val, _sub, _st in _cards:
+        _pill_txt = "正常" if _st == "ok" else ("注意" if _st == "warn" else "异常")
+        _stcards.append(
+            '<div class="stcard"><div class="kpi-head">'
+            f'<span class="kpi-label">{_label}</span>'
+            f'<span class="stpill {_st}">{_pill_txt}</span></div>'
+            f'<div class="kpi-value">{_val}</div>'
+            f'<div class="kpi-sub">{_sub}</div></div>')
+    st.markdown(f'<div class="cardgrid">{"".join(_stcards)}</div>',
                 unsafe_allow_html=True)
     # 各标的行情形细：与 asof 对齐为正常，落后标红（BTC 日K按UTC收盘，允许晚一天）
     st.markdown('<div class="sec" style="font-size:14px">行情明细</div>',
