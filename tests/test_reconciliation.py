@@ -30,15 +30,27 @@ def test_positions_match_db():
 
 
 def test_nav_matches_daily_report():
-    """快照净值与 DB daily_report 最新一致。"""
+    """快照净值与 DB daily_report 最新一致。
+
+    asof 是多市场取 max（见 lib/freshness.py 约定）：周末/假期加密先行时
+    asof 会比股票交易日新，这是正常的。因此按账户取 asof 当天或之前
+    的最新一行做比对，而不是要求所有账户都有 asof 当天的行。
+    14 天边界只是"管线已死"的熔丝（覆盖任何长假休市），
+    日历精度的过期判定由 test_freshness 负责。
+    """
+    from datetime import date as _date, timedelta as _td
     asof = snap["asof"]
+    asof_d = _date.fromisoformat(asof)
     for aid in ("sim_a", "sim_hk", "sim_crypto"):
         row = db.execute(
-            "SELECT nav FROM daily_report WHERE account=? AND symbol='TOTAL' AND date=?",
+            "SELECT date, nav FROM daily_report WHERE account=? AND symbol='TOTAL'"
+            " AND date<=? ORDER BY date DESC LIMIT 1",
             (aid, asof)).fetchone()
-        assert row is not None, f"DB 缺 {aid} 在 {asof} 的净值"
-        assert abs(row[0] - _snap_acct(aid)["nav"]) < 0.01, \
-            f"{aid} 净值不一致: DB={row[0]} 快照={_snap_acct(aid)['nav']}"
+        assert row is not None, f"DB 缺 {aid} 在 {asof} 当天或之前的净值"
+        assert (asof_d - _date.fromisoformat(row[0])) <= _td(days=14), \
+            f"{aid} 净值行过期: {row[0]} vs asof {asof}"
+        assert abs(row[1] - _snap_acct(aid)["nav"]) < 0.01, \
+            f"{aid} 净值不一致: DB={row[1]}({row[0]}) 快照={_snap_acct(aid)['nav']}"
 
 
 def test_realized_pnl_matches_fills():
