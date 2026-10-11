@@ -14,7 +14,7 @@ import hmac
 import json
 import os
 import uuid
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 
 import requests
 import streamlit as st
@@ -1169,8 +1169,12 @@ stt, mod = control.get("status"), control.get("mode")
 dot = '<span class="livedot"></span>' if stt == "running" else ""
 
 def data_freshness():
-    """基于快照**内容**判定数据新鲜度（不依赖文件 mtime）。逻辑见 lib/freshness.py。"""
-    return _data_freshness_fn(snap, now)
+    """基于快照**内容**判定数据新鲜度（不依赖文件 mtime）。逻辑见 lib/freshness.py。
+
+    lib 约定 now 为北京时间；Streamlit Cloud 服务器是 UTC，在此换算。
+    """
+    bjk = datetime.now(timezone.utc) + timedelta(hours=8)
+    return _data_freshness_fn(snap, bjk.replace(tzinfo=None))
 
 
 _fresh, _fresh_detail = data_freshness()

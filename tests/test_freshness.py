@@ -75,3 +75,56 @@ def test_weekday_before_batch_uses_prev_day():
     snap2 = _snap("2026-10-08", _kl("002446"))
     state2, _ = data_freshness(snap2, monday_morning)
     assert state2 == "stale"
+
+
+# ---- 多市场日历：周末加密先行是正常现象，不应误报 stale ----
+
+# 周日 2026-10-11 15:45（北京时间）：BTC 10-10 bar 已收盘入库，
+# asof 仍为周五 10-09 —— 数据正常
+SUN_1545 = datetime(2026, 10, 11, 15, 45)
+
+
+def test_ok_btc_ahead_of_asof_on_weekend():
+    klines = _kl("002446", "688305", "HK0354", "HK9660")
+    klines["BTCUSDT"] = [("10-10", 82912.7)]
+    snap = _snap("2026-10-09", klines)
+    state, detail = data_freshness(snap, SUN_1545)
+    assert state == "ok", detail
+
+
+def test_ok_sunday_night_asof_advanced_by_crypto():
+    # 周日 17:12 跑批后：asof 被加密推到 10-10，股票仍停在周五 —— 正常
+    night = datetime(2026, 10, 11, 20, 0)
+    klines = _kl("002446", "688305", "HK0354", "HK9660")
+    klines["BTCUSDT"] = [("10-10", 82912.7)]
+    snap = _snap("2026-10-10", klines)
+    state, detail = data_freshness(snap, night)
+    assert state == "ok", detail
+
+
+def test_ok_monday_preopen_after_sunday_batch():
+    # 周一 09:00 盘前：asof=10-10（周日加密），股票=周五 —— 正常
+    monday = datetime(2026, 10, 12, 9, 0)
+    klines = _kl("002446", "688305", "HK0354", "HK9660")
+    klines["BTCUSDT"] = [("10-10", 82912.7)]
+    snap = _snap("2026-10-10", klines)
+    state, detail = data_freshness(snap, monday)
+    assert state == "ok", detail
+
+
+def test_stale_btc_two_days_behind():
+    # BTC 行情落后两天（接口真挂了）—— 必须报 stale
+    snap = _snap("2026-10-09", {"BTCUSDT": [("10-08", 80000.0)]})
+    state, detail = data_freshness(snap, SUN_1545)
+    assert state == "stale", detail
+    assert "BTCUSDT" in detail
+
+
+def test_stale_stock_vendor_gap_after_batch():
+    # 周三 18:00（跑批后）：某股票缺了当天 bar —— 真过期，必须报 stale
+    wed = datetime(2026, 10, 14, 18, 0)
+    klines = {"002446": [("10-13", 7.5)], "BTCUSDT": [("10-13", 83000.0)]}
+    snap = _snap("2026-10-14", klines)
+    state, detail = data_freshness(snap, wed)
+    assert state == "stale", detail
+    assert "002446" in detail

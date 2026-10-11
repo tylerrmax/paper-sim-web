@@ -2,6 +2,11 @@
 import json
 import os
 import re
+import sys
+from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from lib.freshness import check_klines
 
 SNAP_PATH = os.path.join(os.path.dirname(__file__), "..", "snapshot.json")
 
@@ -37,26 +42,17 @@ def test_accounts_structure():
 
 
 def test_klines_symbols_and_dates():
+    # 各标的最后 bar 对齐各自市场日历（lib/freshness.check_klines）：
+    # 股票=最近交易日，BTC=最新已收盘 UTC 日K（允许晚一天）。
+    # 周末/假期加密先行导致 asof 比股票新是正常的，不在此报错。
     klines = snap["klines"]
-    asof = snap["asof"]
-    want = asof[5:]  # "MM-DD"
     for sym in ("002446", "688305", "BTCUSDT", "HK0354", "HK9660"):
         assert sym in klines, f"缺少 {sym} 的 K 线"
         bars = klines[sym]
         assert len(bars) > 0, f"{sym} K 线为空"
-        last_date = bars[-1][0]
-        if sym.upper().endswith("USDT"):
-            # BTC 允许晚一天（UTC 收盘）
-            assert last_date in (want, _prev_day(want)), \
-                f"{sym} 最后日期 {last_date} 与 asof {asof} 不一致"
-        else:
-            assert last_date == want, f"{sym} 最后日期 {last_date} != {want}"
-
-
-def _prev_day(mm_dd):
-    from datetime import datetime, timedelta
-    d = datetime.strptime(f"2026-{mm_dd}", "%Y-%m-%d") - timedelta(days=1)
-    return d.strftime("%m-%d")
+    now_bjk = datetime.now(timezone.utc) + timedelta(hours=8)
+    bad = check_klines(klines, now_bjk.replace(tzinfo=None))
+    assert not bad, f"K线最后日期与市场日历不一致: {bad}"
 
 
 def test_signals_fields():
