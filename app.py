@@ -356,6 +356,25 @@ def tape_html():
                 unsafe_allow_html=True)
 
 
+# 标的中文名映射
+SYMBOL_NAMES = {
+    "002446": "盛路通信", "688305": "科德数控", "002472": "双环传动",
+    "HK9660": "地平线机器人", "HK0354": "中软国际", "600150": "中国船舶",
+    "002192": "融捷股份", "002812": "恩捷股份", "000938": "紫光股份",
+    "002837": "英维克", "300499": "高澜股份", "002185": "华天科技",
+    "002639": "雪人集团", "300827": "上能电气", "002747": "埃斯顿",
+    "600522": "中天科技", "BTCUSDT": "比特币",
+    "上证指数": "上证指数", "深证成指": "深证成指",
+    "创业板指": "创业板指", "恒生指数": "恒生指数",
+}
+
+def _display_name(sym):
+    """代码转中文名显示：中文名 + 代码小字。"""
+    cn = SYMBOL_NAMES.get(sym, sym)
+    if cn == sym:
+        return sym
+    return f"{cn}<br><span style='font-size:11px;opacity:0.6'>{sym}</span>"
+
 def _mkt_card(name, px, chg=None, pct=None):
     """万得式指数/标的卡片：大数字 + 红涨绿跌。chg 为 None 时只显示涨跌幅。"""
     if pct is None:
@@ -367,7 +386,7 @@ def _mkt_card(name, px, chg=None, pct=None):
         chg_html = (f'<div class="mkt-chg"><span class="{cls}">'
                     f'{pts}{pct:+.2f}%</span></div>')
     px_cls = "up" if (pct or 0) > 0 else ("down" if (pct or 0) < 0 else "")
-    return (f'<div class="mkt-card"><div class="mkt-name">{name}</div>'
+    return (f'<div class="mkt-card"><div class="mkt-name">{_display_name(name)}</div>'
             f'<div class="mkt-px num {px_cls}">{px:,.2f}</div>{chg_html}</div>')
 
 
