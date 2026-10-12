@@ -1109,25 +1109,6 @@ def account_card(aid, label, not_started_text=None):
                     f'{p["symbol"]} · 近{len(kl)}日K + MA20</div>',
                     unsafe_allow_html=True)
                 st.markdown(kline_svg(kl), unsafe_allow_html=True)
-    # 信号与成交（折叠，保持精简）
-    sigs = [s for s in snap.get("signals", []) if s.get("account") == aid][:20]
-    fills = [f for f in snap.get("fills", []) if f.get("account") == aid][:20]
-    with st.expander(f"近期信号（{len(sigs)}）/ 成交（{len(fills)}）"):
-        if sigs:
-            st.dataframe(
-                [{"日期": s["date"], "标的": s["symbol"],
-                  "方向": side_cn(s["side"]), "信号价": s.get("price")}
-                 for s in sigs], use_container_width=True, hide_index=True)
-        else:
-            st.caption("暂无信号")
-        if fills:
-            st.dataframe(
-                [{"日期": f["date"], "标的": f["symbol"], "方向": side_cn(f["side"]),
-                  "数量": f.get("qty"), "成交价": f.get("price"),
-                  "费用": f.get("fee"), "盈亏": f.get("pnl")}
-                 for f in fills], use_container_width=True, hide_index=True)
-        else:
-            st.caption("暂无成交")
 
 
 
