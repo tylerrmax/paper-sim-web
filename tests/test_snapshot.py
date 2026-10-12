@@ -46,7 +46,8 @@ def test_klines_symbols_and_dates():
     # 股票=最近交易日，BTC=最新已收盘 UTC 日K（允许晚一天）。
     # 周末/假期加密先行导致 asof 比股票新是正常的，不在此报错。
     klines = snap["klines"]
-    for sym in ("002446", "688305", "BTCUSDT", "HK0354", "HK9660"):
+    for sym in ("002446", "688305", "BTCUSDT", "HK0354", "HK9660",
+                "300827", "002639", "600150"):
         assert sym in klines, f"缺少 {sym} 的 K 线"
         bars = klines[sym]
         assert len(bars) > 0, f"{sym} K 线为空"
