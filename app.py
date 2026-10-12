@@ -902,6 +902,9 @@ def pending_panel(items):
     submitted = st.session_state.setdefault("submitted_cmds", set())
     cur_keys = {f'{p["account"]}_{p["date"]}_{p["symbol"]}_{p["side"]}' for p in items}
     submitted.intersection_update(cur_keys)
+    # 下单指引映射（执行桥）：(date,account,symbol,side) → guidance
+    _guide_map = {(g["date"], g["account"], g["symbol"], g["side"]): g
+                  for g in (snap.get("execution", {}) or {}).get("guidance", [])}
     for p in items:
         st.markdown(
             f'<div class="sig-row"><span class="num">{p["date"]} {p["symbol"]} '
@@ -909,6 +912,20 @@ def pending_panel(items):
             f'<span class="flat" style="font-size:12px">'
             f'{ACCT_CN.get(p.get("account"), "")}</span></div>',
             unsafe_allow_html=True)
+        # 下单指引（执行桥）：执行日 / 可操作性 / 建议下单方式
+        g = _guide_map.get((p.get("date"), p.get("account"),
+                            p.get("symbol"), p.get("side")))
+        if g:
+            if g["operable"]:
+                st.markdown(
+                    f'<div style="font-size:12px;color:#8b93a5;padding:2px 2px 6px">'
+                    f'📋 {g["exec_date"]} 执行 · {g["advice"]}</div>',
+                    unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    f'<div style="font-size:12px;color:#f6465d;padding:2px 2px 6px">'
+                    f'⛔ {g["exec_date"]} · {g["reason"]}</div>',
+                    unsafe_allow_html=True)
         key = f'{p["account"]}_{p["date"]}_{p["symbol"]}_{p["side"]}'
         if key in submitted:
             st.markdown('<div style="font-size:12px;color:#2ebd85;padding:4px 2px">'
@@ -940,6 +957,10 @@ def event_stream():
         return (x.get("date"), x.get("account"), x.get("symbol"), x.get("side"))
     fill_map = {_k(f): f for f in fills}
     appr_map = {_k(a): a.get("decision") for a in apprs}
+    # 执行桥：滑点映射 (date,account,symbol,side) → {real_price, slippage_pct}
+    slip_map = {(s["date"], s["account"], s["symbol"], s["side"]): s
+                for s in (snap.get("execution", {}) or {}).get("slippage", [])
+                if s.get("real_price")}
 
     st.markdown('<div class="sec">交易动态</div>', unsafe_allow_html=True)
     if not signals:
@@ -981,6 +1002,15 @@ def event_stream():
                 lp = last_px.get(sym)
                 upnl = (lp - px) * qty if lp else None
                 pnl_txt = f'浮动 {pnl_html(upnl)}'
+            # 执行桥：有实盘登记时追加实际价与滑点
+            sl = slip_map.get(k)
+            if sl:
+                sp = sl["slippage_pct"]
+                scls = "up" if sp > 0 else ("down" if sp < 0 else "flat")
+                sarw = "▲" if sp > 0 else ("▼" if sp < 0 else "")
+                pnl_txt += (f'<br><span style="font-size:11px;color:#8b93a5">'
+                            f'实 {fpx_sym(sym, sl["real_price"])} '
+                            f'<span class="{scls}">{sarw}{sp:+.2f}%</span></span>')
             status = '<span class="etag etag-fill">成交</span>'
             price_txt, qty_txt = fpx_sym(sym, px), f"{qty:g}"
         elif dec == "skipped":
