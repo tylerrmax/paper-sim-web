@@ -295,9 +295,9 @@ def btc_live():
 
 @st.cache_data(ttl=60)
 def indices_live():
-    """A股三大指数实时（新浪公开行情，仅展示）。返回 [(名称, 现价, 涨跌额, 涨跌幅%), ...]。"""
+    """A股三大指数 + 恒生指数实时（新浪公开行情，仅展示）。返回 [(名称, 现价, 涨跌额, 涨跌幅%), ...]。"""
     try:
-        r = requests.get("https://hq.sinajs.cn/list=s_sh000001,s_sz399001,s_sz399006",
+        r = requests.get("https://hq.sinajs.cn/list=s_sh000001,s_sz399001,s_sz399006,int_hangseng",
                          headers={"Referer": "https://finance.sina.com.cn"},
                          timeout=8)
         r.raise_for_status()
@@ -538,7 +538,7 @@ def market_overview():
     idx = indices_live()
     cards = []
     if idx:
-        for name, px, chg, pct in idx[:3]:
+        for name, px, chg, pct in idx[:4]:
             cards.append(_mkt_card(name, px, chg, pct))
     tape = snap.get("tape", []) or []
     for t in tape:
