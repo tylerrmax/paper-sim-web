@@ -48,15 +48,109 @@ def git(*args):
                           capture_output=True, text=True, timeout=120)
 
 
+# ---------- GitHub API 降级传输（2026-10-23：VM 到 github.com 的 git 协议
+# 频繁被重置，api.github.com 正常。git pull/push 失败时走 API，保证同步不断） ----------
+API_BASE = "https://api.github.com"
+GH_OWNER, GH_REPO = "tylerrmax", "paper-sim-web"
+GH_BRANCH = "main"
+
+
+def _api(method, path, data=None):
+    """最小 GitHub REST 调用，返回解析后的 JSON。"""
+    import urllib.request
+    token = get_token()
+    body = json.dumps(data).encode() if data is not None else None
+    req = urllib.request.Request(API_BASE + path, data=body, method=method,
+                                 headers={"Accept": "application/vnd.github+json",
+                                          "Content-Type": "application/json",
+                                          "Authorization": f"Bearer {token}",
+                                          "User-Agent": "paper-sim-git-sync"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        raw = resp.read()
+        return json.loads(raw.decode()) if raw else {}
+
+
+def api_pull_pending():
+    """经 API 拉回 commands/pending/*.json 到本地。成功返回 {文件名: blob_sha}，
+    失败返回 None。"""
+    try:
+        items = _api("GET", f"/repos/{GH_OWNER}/{GH_REPO}/contents/"
+                            f"commands/pending?ref={GH_BRANCH}")
+    except Exception as e:
+        print(f"API 拉取 pending 失败: {e}")
+        return None
+    if not isinstance(items, list):
+        return None
+    shas = {}
+    for it in items:
+        name = it.get("name", "")
+        if not name.endswith(".json") or it.get("type") != "file":
+            continue
+        try:
+            blob = _api("GET", f"/repos/{GH_OWNER}/{GH_REPO}/git/blobs/"
+                               f"{it['sha']}")
+            content = base64.b64decode(blob["content"]).decode("utf-8")
+        except Exception as e:
+            print(f"API 下载 {name} 失败: {e}")
+            return None
+        dst = os.path.join(REPO, "commands", "pending", name)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, "w", encoding="utf-8") as f:
+            f.write(content)
+        shas[name] = it["sha"]
+    return shas
+
+
+def api_push(changes, message):
+    """经 API 一次提交推送 changes：[(path, bytes|None)]，None=删除。
+    成功返回 True。"""
+    try:
+        ref = _api("GET", f"/repos/{GH_OWNER}/{GH_REPO}/git/refs/heads/{GH_BRANCH}")
+        base_sha = ref["object"]["sha"]
+        base_tree = _api("GET", f"/repos/{GH_OWNER}/{GH_REPO}/git/commits/{base_sha}")["tree"]["sha"]
+        tree_items = []
+        for path, content in changes:
+            if content is None:
+                tree_items.append({"path": path, "mode": "100644",
+                                   "type": "blob", "sha": None})
+            else:
+                blob = _api("POST", f"/repos/{GH_OWNER}/{GH_REPO}/git/blobs",
+                            {"content": base64.b64encode(content).decode(),
+                             "encoding": "base64"})
+                tree_items.append({"path": path, "mode": "100644",
+                                   "type": "blob", "sha": blob["sha"]})
+        tree = _api("POST", f"/repos/{GH_OWNER}/{GH_REPO}/git/trees",
+                    {"base_tree": base_tree, "tree": tree_items})
+        commit = _api("POST", f"/repos/{GH_OWNER}/{GH_REPO}/git/commits",
+                      {"message": message, "tree": tree["sha"],
+                       "parents": [base_sha]})
+        _api("PATCH", f"/repos/{GH_OWNER}/{GH_REPO}/git/refs/heads/{GH_BRANCH}",
+             {"sha": commit["sha"]})
+        return True
+    except Exception as e:
+        print(f"API 推送失败: {e}")
+        return False
+
+
 def main():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     os.chdir(REPO)
     r = git("pull", "--rebase", "--autostash")
-    if r.returncode != 0 and "no remote" not in (r.stderr or "").lower():
-        print(f"[{now}] git pull 失败: {(r.stderr or '').strip()[-200:]}")
+    pull_ok = (r.returncode == 0)
+    api_shas = None
+    if not pull_ok and "no remote" not in (r.stderr or "").lower():
+        print(f"[{now}] git pull 失败: {(r.stderr or '').strip()[-200:]}，改走 API 拉取")
+        api_shas = api_pull_pending()
+        if api_shas is not None:
+            print(f"[{now}] API 拉取 pending 完成（{len(api_shas)} 个文件）")
         # 无远端（如尚未部署）则继续本地流程
     applied = []
-    pend_files = sorted(glob.glob(os.path.join(REPO, "commands", "pending", "*.json")))
+    applied_ids = []
+    # 只有远端读取成功才消费指令，避免用陈旧本地文件重复执行
+    if pull_ok or api_shas is not None:
+        pend_files = sorted(glob.glob(os.path.join(REPO, "commands", "pending", "*.json")))
+    else:
+        pend_files = []
     cmds = []
     for f in pend_files:
         try:
@@ -94,6 +188,7 @@ def main():
         for f, c in zip(pend_files, cmds):
             if c.get("id") in applied:
                 os.remove(f)
+                applied_ids.append(os.path.basename(f))
         print(f"[{now}] 执行指令 {len(applied)}/{len(cmds)}: {applied}")
     # 快照同步（/tmp 可能被系统清理：若源不存在则直接重建，只读 DB）
     if not os.path.exists(SNAP_SRC):
@@ -148,15 +243,33 @@ def main():
     else:
         print(f"[{now}] 快照源不存在: {SNAP_SRC}")
     if changed or applied:
-        git("add", "-A")
         msg = f"sync {now}" + (f" ({len(applied)} cmds)" if applied else "")
+        git("add", "-A")
         r = git("commit", "-m", msg)
+        push_done = False
         if r.returncode == 0 or "nothing to commit" not in (r.stdout + r.stderr):
             r = git("push")
             if r.returncode != 0:
-                print(f"[{now}] git push 失败: {(r.stderr or '').strip()[-200:]}")
+                print(f"[{now}] git push 失败: {(r.stderr or '').strip()[-200:]}，改走 API 推送")
             else:
+                push_done = True
                 print(f"[{now}] 已推送: {msg}")
+        if not push_done:
+            # API 降级推送：snapshot.json + 新归档 done 文件 + 删除已消费 pending
+            changes = []
+            if changed and os.path.exists(SNAP_DST):
+                changes.append(("snapshot.json", open(SNAP_DST, "rb").read()))
+            done_dir = os.path.join(REPO, "commands", "done")
+            for cid in applied:
+                for ff in glob.glob(os.path.join(done_dir, f"{cid}.json")):
+                    rel = os.path.relpath(ff, REPO)
+                    changes.append((rel, open(ff, "rb").read()))
+            for name in applied_ids:
+                changes.append((f"commands/pending/{name}", None))
+            if changes and api_push(changes, msg):
+                print(f"[{now}] 已经 API 推送: {msg}")
+            else:
+                print(f"[{now}] 推送失败：git 与 API 均不可用，下轮重试")
     else:
         print(f"[{now}] 无变化")
 
