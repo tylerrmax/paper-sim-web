@@ -21,10 +21,30 @@ import sys
 from datetime import datetime
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SIM = os.path.expanduser("~/workspace/paper-trading-sim")
+# PAPER_SIM_DIR 仅供隔离测试覆盖；生产恒为默认主仓库路径
+SIM = os.environ.get("PAPER_SIM_DIR",
+                     os.path.expanduser("~/workspace/paper-trading-sim"))
 SNAP_SRC = "/tmp/sim_snapshot.json"
 SNAP_DST = os.path.join(REPO, "snapshot.json")
 TOKEN_FILE = os.path.expanduser("~/.config/paper-sim-web/github_token")
+
+# 发布门禁（轻量版）：模块与本脚本同目录。导入失败按门禁拒绝处理
+# （fail-closed），绝不静默裸奔发布。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import release_gate_light as lgate  # noqa: E402
+    _LGATE_ERR = None
+except Exception as _e:  # pragma: no cover
+    lgate = None
+    _LGATE_ERR = _e
+
+
+def _bypass_reason():
+    """--force-bypass 后一个参数为原因；未出现返回 None。"""
+    if "--force-bypass" in sys.argv:
+        i = sys.argv.index("--force-bypass")
+        return sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
+    return None
 
 
 def get_token():
@@ -132,8 +152,40 @@ def api_push(changes, message):
         return False
 
 
+def _gate_check_only():
+    """--gate-check-only：只跑轻量门禁并以 0/3 退出，不做任何同步。"""
+    if lgate is None:
+        print(f"发布门禁拒绝：轻量门禁模块缺失（导入失败：{_LGATE_ERR}）")
+        sys.exit(3)
+    db_path = os.path.join(SIM, "db", "sim.db")
+
+    def _fills_len(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                return len(json.load(f).get("fills") or [])
+        except Exception:
+            return None
+
+    src_path = SNAP_SRC if os.path.exists(SNAP_SRC) else SNAP_DST
+    new_n = _fills_len(src_path)
+    last_n = _fills_len(SNAP_DST) if os.path.exists(SNAP_DST) else None
+    res = lgate.check_snapshot_gate(SIM, db_path, new_n, last_n,
+                                    advance=False)
+    if not res["ok"]:
+        print(f"发布门禁[light] ❌ {res['check']}：{res['reason']}")
+        lgate.record_refusal(SIM, res["check"], res["reason"])
+        print(f"{lgate.REJECT_LINE}：{res['reason']}")
+        sys.exit(3)
+    print(f"发布门禁[light] ✅ {res['detail']}")
+    lgate.record_pass(SIM, res["detail"], event="check_only_pass")
+    print("发布门禁检查通过（--gate-check-only：未同步、未推进水位）")
+    sys.exit(0)
+
+
 def main():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if "--gate-check-only" in sys.argv:
+        _gate_check_only()
     os.chdir(REPO)
     r = git("pull", "--rebase", "--autostash")
     pull_ok = (r.returncode == 0)
@@ -198,6 +250,7 @@ def main():
         if r.returncode != 0 or not os.path.exists(SNAP_SRC):
             print(f"[{now}] 快照重建失败: {(r.stderr or '')[-200:]}")
     changed = False
+    gate_refused = False
     if os.path.exists(SNAP_SRC):
         try:
             data = json.load(open(SNAP_SRC, encoding="utf-8"))
@@ -234,12 +287,49 @@ def main():
                 data["klines"] = klines
             except Exception as e:
                 print(f"[{now}] tape/K线注入失败: {e}")
-            new = json.dumps(data, ensure_ascii=False,
-                             separators=(",", ":")).encode("utf-8")
-            old = open(SNAP_DST, "rb").read() if os.path.exists(SNAP_DST) else b""
-            if new != old:
-                open(SNAP_DST, "wb").write(new)
-                changed = True
+            # ---- 发布门禁（轻量版）：快照发布前最后一道检查 ----
+            # 不过 → 本轮不写 snapshot.json、不发布；指令拉取/执行已在
+            # 上文完成，不受影响。拒绝落持久日志并以 exit 3 结束本轮。
+            publish_ok = True
+            bypass = _bypass_reason()
+            if bypass is not None:
+                print(f"[{now}] ⚠️⚠️ "
+                      f"{lgate.BYPASS_LINE if lgate else '发布门禁已被绕过'}"
+                      f"（--force-bypass）：{bypass}"
+                      f" —— 本轮快照不经轻量门禁校验")
+                if lgate is not None:
+                    lgate.record_bypass(SIM, bypass)
+            elif lgate is None:
+                print(f"[{now}] 发布门禁拒绝：轻量门禁模块缺失"
+                      f"（导入失败：{_LGATE_ERR}）")
+                publish_ok = False
+                gate_refused = True
+            else:
+                last_n = None
+                if os.path.exists(SNAP_DST):
+                    try:
+                        with open(SNAP_DST, encoding="utf-8") as f:
+                            last_n = len(json.load(f).get("fills") or [])
+                    except Exception:
+                        last_n = None
+                res = lgate.check_snapshot_gate(
+                    SIM, os.path.join(SIM, "db", "sim.db"),
+                    len(data.get("fills") or []), last_n)
+                if not res["ok"]:
+                    print(f"[{now}] {lgate.REJECT_LINE}：{res['reason']}")
+                    lgate.record_refusal(SIM, res["check"], res["reason"])
+                    publish_ok = False
+                    gate_refused = True
+                else:
+                    print(f"[{now}] 发布门禁[light] ✅ {res['detail']}")
+                    lgate.record_pass(SIM, res["detail"])
+            if publish_ok:
+                new = json.dumps(data, ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8")
+                old = open(SNAP_DST, "rb").read() if os.path.exists(SNAP_DST) else b""
+                if new != old:
+                    open(SNAP_DST, "wb").write(new)
+                    changed = True
     else:
         print(f"[{now}] 快照源不存在: {SNAP_SRC}")
     if changed or applied:
@@ -272,6 +362,9 @@ def main():
                 print(f"[{now}] 推送失败：git 与 API 均不可用，下轮重试")
     else:
         print(f"[{now}] 无变化")
+    if gate_refused:
+        print(f"[{now}] 本轮因发布门禁拒绝未发布快照，下轮重试")
+        sys.exit(3)
 
 
 if __name__ == "__main__":
