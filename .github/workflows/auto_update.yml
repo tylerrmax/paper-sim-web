@@ -26,7 +26,7 @@ jobs:
 
       - name: Run Crawler & Update Data Script
         run: |
-          python update_v6_data.py  # 你的更新脚本
+         python 工具/update_v6_data.py  # 你的更新脚本
 
       - name: Commit and Push New Data to GitHub
         run: |
