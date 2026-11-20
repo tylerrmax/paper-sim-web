@@ -7,7 +7,12 @@
 拉取与执行在门禁之前完成，不受门禁影响。检查项：
   1. db_fills：主库 fills COUNT 不得低于轻量水位（上次通过时见到的 COUNT，
      存主仓库根 .release_gate_light_state.json，不在任何推送白名单内）；
-  2. snapshot_fills：新快照 fills 笔数不得少于上轮已推快照的笔数；
+  2. snapshot_fills（2026-11-21 口径变更，用户批准·路径 A）：快照是
+     60 天滚动窗口（sync_snapshot.py 以 date >= today-60d 取数），老成交
+     自然滚出窗口会使快照笔数下降，旧口径「不得少于上轮笔数」必然误拒。
+     新口径：快照 fills 笔数必须与主库当前 60 天窗口内的 fills 笔数
+     一致；窗口内真实删行（快照与主库窗口不一致）仍拒绝。主库全量笔数
+     回退另由检查 1 的水位拦截，DB 内删行不会被本口径放过；
   3. ledger：纯 SQL 快速核对 positions == fills 净额汇总（<1 秒）。
 任一不过 → git_sync 打印「发布门禁拒绝：<原因>」、本轮不发布快照、以
 exit 3 结束，并把拒绝写入与路径 B 共用的持久拒绝日志：
@@ -20,7 +25,7 @@ release_gate_log.jsonl），且不推进轻量水位。
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 REJECT_LINE = "发布门禁拒绝"
 BYPASS_LINE = "发布门禁已被绕过"
@@ -38,6 +43,26 @@ def db_fills_count(db_path):
     con = _ro(db_path)
     try:
         return con.execute("SELECT COUNT(*) FROM fills").fetchone()[0]
+    finally:
+        con.close()
+
+
+# 快照滚动窗口天数：必须与 sync_snapshot.py 的 CUTOFF（today - 60d）一致。
+WINDOW_DAYS = 60
+
+
+def window_cutoff(today=None):
+    """60 天窗口起点（含）：与 sync_snapshot.py 的 CUTOFF 同口径。"""
+    return ((today or date.today()) - timedelta(days=WINDOW_DAYS)).isoformat()
+
+
+def db_fills_count_in_window(db_path, today=None):
+    """主库当前 60 天窗口内的 fills 笔数（date >= 窗口起点）。"""
+    con = _ro(db_path)
+    try:
+        return con.execute(
+            "SELECT COUNT(*) FROM fills WHERE date >= ?",
+            (window_cutoff(today),)).fetchone()[0]
     finally:
         con.close()
 
@@ -124,12 +149,15 @@ def record_pass(sim_dir, detail, event="pass"):
 
 
 def check_snapshot_gate(sim_dir, db_path, new_snapshot_fills,
-                        last_snapshot_fills, advance=True):
+                        last_snapshot_fills, advance=True, today=None):
     """
     执行轻量门禁。返回 {"ok", "check", "reason", "detail"}：
     ok=False 时 check/reason 给出失败项与原因（调用方负责打印拒绝行、
     落拒绝日志、跳过发布）。advance=True 且通过时推进轻量水位
-    （--gate-check-only 时传 False）。
+    （--gate-check-only 时传 False）。today 仅供测试注入窗口基准日，
+    生产不传、用当天日期（与快照生成同口径）。
+    last_snapshot_fills 保留入参兼容既有调用方，新口径下不再作判定
+    基线（它正是 60 天滚动误拒的来源），仅出现在通过明细中备查。
     """
     def refuse(check, reason):
         return {"ok": False, "check": check, "reason": reason,
@@ -146,12 +174,19 @@ def check_snapshot_gate(sim_dir, db_path, new_snapshot_fills,
             "db_fills",
             f"主库 fills 笔数回退：水位 {state['fills_count']} → 实查 "
             f"{db_count}（疑似旧库/回滚库，拒绝用其快照覆盖线上）")
-    if (last_snapshot_fills is not None and new_snapshot_fills is not None
-            and new_snapshot_fills < last_snapshot_fills):
-        return refuse(
-            "snapshot_fills",
-            f"快照 fills 笔数回退：上轮已推 {last_snapshot_fills} → 本轮 "
-            f"{new_snapshot_fills}")
+    if new_snapshot_fills is not None:
+        try:
+            win_count = db_fills_count_in_window(db_path, today)
+        except Exception as e:
+            return refuse("snapshot_fills", f"主库窗口 fills 读取失败："
+                                            f"{type(e).__name__}: {e}")
+        if new_snapshot_fills != win_count:
+            return refuse(
+                "snapshot_fills",
+                f"快照 fills 笔数与主库 60 天窗口不一致：快照 "
+                f"{new_snapshot_fills} vs 主库窗口 {win_count}"
+                f"（窗口起点 {window_cutoff(today)}）——窗口内成交缺失"
+                f"或快照过期，拒绝发布")
     errs = ledger_errors(db_path)
     if errs:
         return refuse("ledger",
@@ -162,5 +197,6 @@ def check_snapshot_gate(sim_dir, db_path, new_snapshot_fills,
             _save_light_state(sim_dir, db_count)
     return {"ok": True, "check": None, "reason": None,
             "detail": f"db_fills={db_count}，snapshot_fills="
-                      f"{new_snapshot_fills}（上轮 {last_snapshot_fills}），"
-                      f"账本一致"}
+                      f"{new_snapshot_fills}（主库 60 天窗口 "
+                      f"{db_fills_count_in_window(db_path, today)}，"
+                      f"上轮 {last_snapshot_fills}），账本一致"}

@@ -12,6 +12,11 @@ import sqlite3
 import sys
 
 import pytest
+from datetime import date
+
+# 60 天窗口基准日（2026-11-21 口径变更）：fixture 成交为 2026-10-20..22，
+# 以 2026-11-20 为基准日时窗口起点 2026-09-21，5 笔全在窗口内。
+TODAY = date(2026, 11, 20)
 
 TOOLS = os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "tools")
@@ -63,38 +68,41 @@ def db(sim_dir):
 
 
 def test_baseline_passes_and_state_advances(sim_dir, db):
-    res = lgate.check_snapshot_gate(sim_dir, db, 13, 13)
+    res = lgate.check_snapshot_gate(sim_dir, db, 5, 5, today=TODAY)
     assert res["ok"], res
     state = lgate.load_light_state(sim_dir)
     assert state["fills_count"] == 5
 
 
 def test_db_count_rollback_refused(sim_dir, db):
-    assert lgate.check_snapshot_gate(sim_dir, db, 13, 13)["ok"]
+    assert lgate.check_snapshot_gate(sim_dir, db, 5, 5, today=TODAY)["ok"]
     con = sqlite3.connect(db)
     con.execute("DELETE FROM fills WHERE id = 5")
     con.execute("UPDATE positions SET qty = 0 WHERE symbol = '600150'")
     con.commit()
     con.close()
-    res = lgate.check_snapshot_gate(sim_dir, db, 13, 13)
+    res = lgate.check_snapshot_gate(sim_dir, db, 5, 5, today=TODAY)
     assert not res["ok"] and res["check"] == "db_fills"
     assert "回退" in res["reason"]
 
 
 def test_snapshot_fills_decrease_refused(sim_dir, db):
-    res = lgate.check_snapshot_gate(sim_dir, db, 12, 13)
+    # 2026-11-21 口径变更：单纯笔数下降（滚出窗口）不再拒绝（见
+    # test_gate60_scenarios.py 场景 a）；窗口内笔数与主库窗口不一致
+    # （真实缺行）仍拒绝。
+    res = lgate.check_snapshot_gate(sim_dir, db, 4, 5, today=TODAY)
     assert not res["ok"] and res["check"] == "snapshot_fills"
 
 
 def test_ledger_inconsistency_refused(sim_dir, tmp_path):
     bad_db = make_db(tmp_path / "bad.db",
                      positions=[("sim_a", "600150", 999.0)])
-    res = lgate.check_snapshot_gate(sim_dir, bad_db, 13, 13)
+    res = lgate.check_snapshot_gate(sim_dir, bad_db, 5, 5, today=TODAY)
     assert not res["ok"] and res["check"] == "ledger"
 
 
 def test_check_only_does_not_advance(sim_dir, db):
-    res = lgate.check_snapshot_gate(sim_dir, db, 13, 13, advance=False)
+    res = lgate.check_snapshot_gate(sim_dir, db, 5, 5, advance=False, today=TODAY)
     assert res["ok"]
     assert lgate.load_light_state(sim_dir) is None
 
