@@ -13,6 +13,11 @@
      新口径：快照 fills 笔数必须与主库当前 60 天窗口内的 fills 笔数
      一致；窗口内真实删行（快照与主库窗口不一致）仍拒绝。主库全量笔数
      回退另由检查 1 的水位拦截，DB 内删行不会被本口径放过；
+     2026-11-21 边界修正（用户批准）：快照是昨晚按昨天窗口建成的，
+     今晨窗口滑动时快照总数会多出刚滚出的老成交（08:09 实测 15 vs
+     14 误拒）。调用方传 fills 行时，门禁按每行 date 用今天的窗口
+     重算快照窗口内笔数再比对，滚出不再误拒、窗口内真删行仍拒绝；
+     传整数笔数的旧调用方保持原行为；
   3. ledger：纯 SQL 快速核对 positions == fills 净额汇总（<1 秒）。
 任一不过 → git_sync 打印「发布门禁拒绝：<原因>」、本轮不发布快照、以
 exit 3 结束，并把拒绝写入与路径 B 共用的持久拒绝日志：
@@ -65,6 +70,18 @@ def db_fills_count_in_window(db_path, today=None):
             (window_cutoff(today),)).fetchone()[0]
     finally:
         con.close()
+
+
+def snapshot_fills_in_window(rows, today=None):
+    """快照 fills 行按 date 落入当前 60 天窗口的笔数（与主库窗口同口径）。
+    date 缺失/不可比的行不计入窗口——宁可拒绝、不放过。"""
+    cut = window_cutoff(today)
+    n = 0
+    for r in rows or []:
+        d = r.get("date") if isinstance(r, dict) else None
+        if isinstance(d, str) and d >= cut:
+            n += 1
+    return n
 
 
 def ledger_errors(db_path):
@@ -174,17 +191,31 @@ def check_snapshot_gate(sim_dir, db_path, new_snapshot_fills,
             "db_fills",
             f"主库 fills 笔数回退：水位 {state['fills_count']} → 实查 "
             f"{db_count}（疑似旧库/回滚库，拒绝用其快照覆盖线上）")
+    snap_total = None
+    snap_win = None
     if new_snapshot_fills is not None:
         try:
             win_count = db_fills_count_in_window(db_path, today)
         except Exception as e:
             return refuse("snapshot_fills", f"主库窗口 fills 读取失败："
                                             f"{type(e).__name__}: {e}")
-        if new_snapshot_fills != win_count:
+        if isinstance(new_snapshot_fills, (list, tuple)):
+            # 传 fills 行：按今天窗口重算快照窗口内笔数（边界修正，
+            # 见模块 docstring 检查 2），滚出窗口的老成交不计入。
+            snap_total = len(new_snapshot_fills)
+            snap_win = snapshot_fills_in_window(new_snapshot_fills, today)
+            cmp_n = snap_win
+        else:
+            cmp_n = new_snapshot_fills
+        if cmp_n != win_count:
+            if snap_total is not None:
+                desc = (f"快照窗口内 {snap_win}（总数 {snap_total}）"
+                        f" vs 主库窗口 {win_count}")
+            else:
+                desc = f"快照 {new_snapshot_fills} vs 主库窗口 {win_count}"
             return refuse(
                 "snapshot_fills",
-                f"快照 fills 笔数与主库 60 天窗口不一致：快照 "
-                f"{new_snapshot_fills} vs 主库窗口 {win_count}"
+                f"快照 fills 笔数与主库 60 天窗口不一致：{desc}"
                 f"（窗口起点 {window_cutoff(today)}）——窗口内成交缺失"
                 f"或快照过期，拒绝发布")
     errs = ledger_errors(db_path)
@@ -195,8 +226,12 @@ def check_snapshot_gate(sim_dir, db_path, new_snapshot_fills,
         prev = (state or {}).get("fills_count", 0)
         if db_count > prev:
             _save_light_state(sim_dir, db_count)
+    if snap_total is not None:
+        snap_desc = f"窗口内 {snap_win}/总数 {snap_total}"
+    else:
+        snap_desc = f"{new_snapshot_fills}"
     return {"ok": True, "check": None, "reason": None,
             "detail": f"db_fills={db_count}，snapshot_fills="
-                      f"{new_snapshot_fills}（主库 60 天窗口 "
+                      f"{snap_desc}（主库 60 天窗口 "
                       f"{db_fills_count_in_window(db_path, today)}，"
                       f"上轮 {last_snapshot_fills}），账本一致"}

@@ -159,6 +159,13 @@ def _gate_check_only():
         sys.exit(3)
     db_path = os.path.join(SIM, "db", "sim.db")
 
+    def _fills_rows(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f).get("fills") or []
+        except Exception:
+            return None
+
     def _fills_len(p):
         try:
             with open(p, encoding="utf-8") as f:
@@ -167,9 +174,11 @@ def _gate_check_only():
             return None
 
     src_path = SNAP_SRC if os.path.exists(SNAP_SRC) else SNAP_DST
-    new_n = _fills_len(src_path)
+    # 传 fills 行（非笔数）：门禁按 date 用今天窗口重算窗口内笔数，
+    # 跨午夜滚出不再误拒（2026-11-21 边界修正）。
+    new_rows = _fills_rows(src_path)
     last_n = _fills_len(SNAP_DST) if os.path.exists(SNAP_DST) else None
-    res = lgate.check_snapshot_gate(SIM, db_path, new_n, last_n,
+    res = lgate.check_snapshot_gate(SIM, db_path, new_rows, last_n,
                                     advance=False)
     if not res["ok"]:
         print(f"发布门禁[light] ❌ {res['check']}：{res['reason']}")
@@ -314,7 +323,7 @@ def main():
                         last_n = None
                 res = lgate.check_snapshot_gate(
                     SIM, os.path.join(SIM, "db", "sim.db"),
-                    len(data.get("fills") or []), last_n)
+                    data.get("fills") or [], last_n)
                 if not res["ok"]:
                     print(f"[{now}] {lgate.REJECT_LINE}：{res['reason']}")
                     lgate.record_refusal(SIM, res["check"], res["reason"])
